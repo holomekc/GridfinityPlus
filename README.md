@@ -84,6 +84,15 @@ Generator from the Autodesk App Store.
 - Bins that were placed before a plate was changed don't move by themselves. Open the bin and click OK to re-snap it.
 - Placement is not associative. If the face you placed a plate on moves later, the plate stays where it is.
 
+## Support
+
+GridfinityPlus is free. If it saves you time, you can buy me a coffee:
+[ko-fi.com/holomekc](https://ko-fi.com/holomekc)
+
+Most of the Gridfinity geometry comes from Lev Mishin's original
+[FusionGridfinityGenerator](https://github.com/Le0Michine/FusionGridfinityGenerator), so consider supporting
+him too.
+
 ## Credits & license
 
 - Original add-in: **[FusionGridfinityGenerator](https://github.com/Le0Michine/FusionGridfinityGenerator)** by
