@@ -57,6 +57,16 @@ for x in frange(sp['axleX'][0] + 0.0013, sp['axleX'][1], 0.05):
 if touch:
     fails += 1
     print('FAIL axle intersects drawer at', touch, 'points')
+# centred: same play front/back (no guides) and floor/top
+ipc = dict(ip, spoolGuides=False)
+insc = L.insert(cab, ipc); spc = insc['spools']
+py0 = insc['y0'] + float(ipc['front']); py1 = insc['y1'] - float(ipc['wall'])
+front, back = spc['yA'] - spc['D'] / 2 - py0, py1 - spc['yA'] - spc['D'] / 2
+bottom, top = spc['zA'] - spc['D'] / 2 - spc['floorZ'], (insc['z1'] - 0.1) - spc['zA'] - spc['D'] / 2
+print('play front/back', round(front * 10, 1), round(back * 10, 1), 'floor/top', round(bottom * 10, 1), round(top * 10, 1))
+assert abs(front - back) < 1e-6 and abs(bottom - top) < 1e-6
+# with guides at least 10 mm in front
+assert sp['yA'] - sp['D'] / 2 - (ins['y0'] + float(ip['front'])) >= L.GUIDE_SPACE - 1e-9
 # too big spool / too many spools are reported
 big = L.insert(cab, dict(ip, spoolDiameter=9.0))
 many = L.insert(cab, dict(ip, spoolCount=6))

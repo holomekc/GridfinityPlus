@@ -374,6 +374,12 @@ def _updateInfo(inputs):
             maxD = (ins['z1'] - 0.1) - sp['floorZ'] - L.SPOOL_BOTTOM_GAP
             lines.append('Spools: up to {} mm diameter fit, axle {} mm (printed as a separate body)'.format(
                 mm(maxD), mm(sp['axleD'])))
+            tw = float(p['wall'])
+            frontIn = ins['y0'] + (0.0 if ins['overlay'] else float(p['front']))
+            r = sp['D'] / 2
+            lines.append('Spool play: front {} / back {} / floor {} / top {} mm'.format(
+                mm(sp['yA'] - r - frontIn), mm(ins['y1'] - tw - sp['yA'] - r),
+                mm(sp['zA'] - r - sp['floorZ']), mm(ins['z1'] - sp['zA'] - r)))
             if p['handle'] == L.HANDLE_RECESS:
                 half = float(p['handleWidth']) / 2 + float(p['wall'])
                 xc = (ins['x0'] + ins['x1']) / 2

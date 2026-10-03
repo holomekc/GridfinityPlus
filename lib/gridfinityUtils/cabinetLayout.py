@@ -490,14 +490,18 @@ SPOOL_COLLAR_GAP = 0.05
 SPOOL_BOTTOM_GAP = 0.2
 SPOOL_BACK_GAP = 0.2
 SPOOL_AXLE_PLAY = 0.08
+# Free depth in front of the spools for the wire eyelets.
+GUIDE_SPACE = 1.0
 
 
 def spoolLayout(ins: dict) -> dict:
     """Spool interior inside an insert (cabinet local cm): axle position,
     cradle posts, spool centres, wire hole / guide positions, errors.
 
-    Spools hang on one axle across the drawer near the back; the wire runs
-    forward close to the floor through a guide eyelet to a hole in the front.
+    Spools hang on one axle across the drawer, centred in depth and height
+    (same play all around). With wire guides at least GUIDE_SPACE stays free
+    in front of the spools for the eyelets; the wire runs forward close to
+    the floor through the eyelet to a hole in the front.
     """
     ip = ins['p']
     tw = float(ip['wall'])
@@ -519,17 +523,24 @@ def spoolLayout(ins: dict) -> dict:
     avail = px1 - px0
     if need > avail + 1e-9:
         errors.append('{} spool(s) need {:.0f} mm, {:.0f} mm free inside'.format(n, need * 10, avail * 10))
-    zA = floorZ + SPOOL_BOTTOM_GAP + D / 2
-    maxD = (ins['z1'] - 0.1) - floorZ - SPOOL_BOTTOM_GAP
+    topZ = ins['z1'] - 0.1
+    maxD = topZ - floorZ - SPOOL_BOTTOM_GAP
     if D > maxD + 1e-9:
         errors.append('Spool too big for this drawer: max {:.0f} mm diameter'.format(maxD * 10))
+    # Centred in height, but never closer than SPOOL_BOTTOM_GAP to the floor.
+    zA = max(floorZ + SPOOL_BOTTOM_GAP + D / 2, (floorZ + topZ) / 2)
     if axleD >= D - 0.4:
         errors.append('Spool bore must be smaller than the spool')
-    yA = py1 - SPOOL_BACK_GAP - D / 2
+    guides = bool(ip['spoolGuides'])
+    frontSpace = GUIDE_SPACE if guides else SPOOL_BACK_GAP
+    # Centred in depth; with guides keep room for the eyelets in front.
+    yMin = py0 + frontSpace + D / 2
+    yMax = py1 - SPOOL_BACK_GAP - D / 2
+    yA = min(max((py0 + py1) / 2, yMin), yMax)
     spoolFront = yA - D / 2
-    if spoolFront - py0 < 1.0:
+    if yMin > yMax + 1e-9:
         errors.append('Drawer too short for this spool: needs {:.0f} mm inside depth'.format(
-            (D + SPOOL_BACK_GAP + 1.0) * 10))
+            (D + SPOOL_BACK_GAP + frontSpace) * 10))
 
     x = (px0 + px1) / 2 - (need - 2 * end) / 2
     posts = [(x + i * pitch, x + i * pitch + SPOOL_POST) for i in range(n + 1)]
