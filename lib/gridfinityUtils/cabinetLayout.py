@@ -56,13 +56,31 @@ INTERIOR_TYPES = (INTERIOR_EMPTY, INTERIOR_COMPARTMENTS, INTERIOR_GRID)
 
 HANDLE_NONE = 'None'
 HANDLE_RECESS = 'Recessed pull'
-HANDLE_SCOOP = 'Scoop pull'
-HANDLE_LIP = 'Hook lip'
-HANDLE_BAR = 'Bar handle'
+HANDLE_PULL = 'Pull handle'
+HANDLE_LEDGE = 'Grooved ledge'
 HANDLE_NOTCH = 'Top notch'
 HANDLE_SLOT = 'Finger hole'
 HANDLE_KNOB = 'Knob'
-HANDLE_TYPES = (HANDLE_RECESS, HANDLE_SCOOP, HANDLE_LIP, HANDLE_BAR, HANDLE_NOTCH, HANDLE_SLOT, HANDLE_KNOB, HANDLE_NONE)
+HANDLE_TYPES = (HANDLE_RECESS, HANDLE_PULL, HANDLE_LEDGE, HANDLE_NOTCH, HANDLE_SLOT, HANDLE_KNOB, HANDLE_NONE)
+
+# Pull handle presets for values stored by earlier versions:
+# (grip face height, grip thickness, top thickness, side walls; 0 = open).
+_PULL_PRESETS = {
+    'Hook lip': (1.6, 0.35, 0.3, 0.0),
+    'Bar handle': (1.6, 0.35, 0.3, 0.5),
+    'Scoop pull': (0.5, 0.25, 0.2, 0.2),
+    'Pull tab': (0.5, 0.25, 0.2, 0.2),
+}
+
+ALIGN_TOP = 'Top'
+ALIGN_CENTER = 'Center'
+ALIGN_BOTTOM = 'Bottom'
+HANDLE_ALIGNS = (ALIGN_TOP, ALIGN_CENTER, ALIGN_BOTTOM)
+
+KNOB_SUPPORT_STAND = 'Stand'
+KNOB_SUPPORT_THIN = 'Thin breakaway'
+KNOB_SUPPORT_NONE = 'None'
+KNOB_SUPPORTS = (KNOB_SUPPORT_STAND, KNOB_SUPPORT_THIN, KNOB_SUPPORT_NONE)
 
 KNOB_ROUND = 'Round'
 KNOB_MUSHROOM = 'Mushroom'
@@ -83,7 +101,8 @@ LABEL_POSITIONS = (LABEL_AUTO, LABEL_BOTTOM, LABEL_TOP, LABEL_LEFT, LABEL_RIGHT)
 # Values stored by earlier versions -> current ones.
 _LEGACY = {
     'insertType': {'Drawer (overlay front)': INSERT_DRAWER, 'Box (flush front)': INSERT_DRAWER},
-    'handle': {'Finger notch': HANDLE_NOTCH, 'Finger slot': HANDLE_SLOT, 'Pull tab': HANDLE_LIP},
+    'handle': {'Finger notch': HANDLE_NOTCH, 'Finger slot': HANDLE_SLOT, 'Pull tab': HANDLE_PULL,
+               'Hook lip': HANDLE_PULL, 'Bar handle': HANDLE_PULL, 'Scoop pull': HANDLE_PULL},
     'labelPos': {'Bottom': LABEL_BOTTOM, 'Top': LABEL_TOP},
 }
 
@@ -156,6 +175,15 @@ INSERT_DEFAULTS = {
     'handleHeight': 1.6,
     'handleDepth': 1.5,
     'knobStyle': KNOB_ROUND,
+    'knobSupport': KNOB_SUPPORT_STAND,
+    'pullGrip': 0.5,
+    'fingerGrooveWidth': 1.0,
+    'fingerGrooveDepth': 0.4,
+    'ledgeRim': 0.2,
+    'handleAlign': ALIGN_TOP,
+    'pullBar': 0.25,
+    'pullTop': 0.2,
+    'pullSides': 0.2,
     'label': LABEL_RECESS,
     'labelPos': LABEL_AUTO,
     'labelWidth': 5.0,
@@ -172,6 +200,9 @@ INSERT_DEFAULTS = {
 def withDefaults(params: dict, defaults: dict) -> dict:
     out = dict(defaults)
     out.update({k: v for k, v in (params or {}).items() if v is not None})
+    oldHandle = (params or {}).get('handle')
+    if oldHandle in _PULL_PRESETS and 'pullSides' not in (params or {}):
+        out['pullGrip'], out['pullBar'], out['pullTop'], out['pullSides'] = _PULL_PRESETS[oldHandle]
     for key, mapping in _LEGACY.items():
         if out.get(key) in mapping:
             if key == 'insertType' and 'frontStyle' not in (params or {}):

@@ -162,11 +162,24 @@ def findBaseplates(design: adsk.fusion.Design):
             entities.append(comp)
 
     for entity in entities:
+        # Deleted plates stay reachable through their attributes (undo
+        # history); never offer them, clicks on them would go nowhere.
         try:
-            if adsk.fusion.CustomFeature.cast(entity) and entity.isSuppressed:
+            if not entity.isValid:
                 continue
+            if adsk.fusion.CustomFeature.cast(entity):
+                if entity.isSuppressed:
+                    continue
+                tlo = entity.timelineObject
+                if tlo is not None and tlo.isRolledBack:
+                    continue
+                # Deleted features can still look valid (undo history), but
+                # they are no longer in their component's feature list.
+                feats = entity.parentComponent.features.customFeatures
+                if not any(feats.item(i) == entity for i in range(feats.count)):
+                    continue
         except Exception:
-            pass
+            continue
         grid = readGrid(entity)
         if not grid:
             continue

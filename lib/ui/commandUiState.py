@@ -33,7 +33,16 @@ class CommandUiState:
         if inputId in self.inputState:
             self.inputState[inputId].value = inputValue
         if inputId in self.commandInputs:
-            self.updateInputFromState(self.commandInputs[inputId])
+            try:
+                self.updateInputFromState(self.commandInputs[inputId])
+            except Exception as err:
+                # Input of a dialog that is already closed: just keep the state.
+                futil.log(f'{self.commandName} Skipping update of {inputId}: {err}')
+
+    def forgetInputs(self):
+        """Drop all registered inputs. Call when a new dialog opens: inputs
+        of the previous (closed) dialog are dead and must not be written to."""
+        self.commandInputs = {}
 
     def initValues(self, inputValues: dict[str, any]):
         for v in inputValues.values():

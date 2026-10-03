@@ -264,5 +264,7 @@ def buildPreviewPlate(des: adsk.fusion.Design, params: dict):
         with gplog.timed('fastPreview: single subtract'):
             _subtract(slab, combinedTool)
 
+        from . import plateSplit
+        slab = plateSplit.split(slab, params)
         gplog.log(f'fastPreview: plate {cols}x{rows} faces={slab.faces.count}')
         return slab

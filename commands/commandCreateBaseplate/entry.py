@@ -19,7 +19,7 @@ ui = app.userInterface
 
 # The command identity information. ***
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_cmdBaseplate'
-CMD_NAME = 'Gridfinity Baseplate'
+CMD_NAME = 'Gridfinity+ Baseplate'
 CMD_Description = 'Create a Gridfinity baseplate - whole cells or cut to an exact size, placed on any plane or face'
 
 # Edit command that Fusion launches when a baseplate custom feature is double-clicked.
@@ -133,6 +133,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     global uiState
 
     args.command.setDialogInitialSize(400, 500)
+    # Inputs of the previous (closed) dialog are dead.
+    uiState.forgetInputs()
 
     # https://help.autodesk.com/view/fusion360/ENU/?contextId=CommandInputs
     inputs = args.command.commandInputs
@@ -187,7 +189,7 @@ def command_preview(args: adsk.core.CommandEventArgs):
 # allowing you to modify values of other inputs based on that change.
 def command_input_changed(args: adsk.core.InputChangedEventArgs):
     changed_input = args.input
-    if changed_input.id in (plateDialog.SIZE_INFO_SIZE, plateDialog.SIZE_INFO_CELLS):
+    if changed_input.id in (plateDialog.SIZE_INFO_SIZE, plateDialog.SIZE_INFO_CELLS, plateDialog.SPLIT_INFO):
         return  # read-only readouts we set ourselves
     global uiState
     if changed_input.id == INPUT_CHANGES_SAVE_DEFAULTS:

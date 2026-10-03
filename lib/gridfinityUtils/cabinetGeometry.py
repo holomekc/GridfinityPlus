@@ -71,6 +71,19 @@ def _prismYZ(x0, x1, ya, yb, za, zb, cuts):
     return body
 
 
+def _slab(x0, x1, y0, y1, z0, z1, rFront, rBack):
+    """Box with vertical corner fillets, separate radius front (y0) / back."""
+    body = _box(x0, x1, y0, y1, z0, z1)
+    for cx, cy, r, sx, sy in ((x0, y0, rFront, 1, 1), (x1, y0, rFront, -1, 1),
+                              (x0, y1, rBack, 1, -1), (x1, y1, rBack, -1, -1)):
+        if r <= 0:
+            continue
+        _subtract(body, _box(min(cx, cx + sx * r), max(cx, cx + sx * r),
+                             min(cy, cy + sy * r), max(cy, cy + sy * r), z0 - 1, z1 + 1))
+        _union(body, _cylinderAxis((cx + sx * r, cy + sy * r, z0), (cx + sx * r, cy + sy * r, z1), r))
+    return body
+
+
 # ------------------------------------------------------------- cabinet parts
 
 def _ledge(xFace, side, y0, y1, zTop, thickness, depth):
@@ -118,7 +131,11 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
         cab = L.cabinet(params)
         p = cab['p']
         ox0, ox1, front, back = cab['x0'], cab['x1'], cab['front'], cab['back']
-        body = _roundedSlab(ox0, ox1, front, back, cab['zBottom'], cab['zTop'], cab['radius'])
+        # Front corners only as round as the wall is thick: with the full
+        # Gridfinity radius the side walls would start behind the front and
+        # ledges / flush inserts would stick out.
+        rFront = min(cab['radius'], cab['wall'])
+        body = _slab(ox0, ox1, front, back, cab['zBottom'], cab['zTop'], rFront, cab['radius'])
 
         # Interior: one open-front pocket per column.
         pockets = [_box(x0, x1, front - 1.0, cab['innerBack'], cab['floorTop'], cab['ceil'])
@@ -141,12 +158,12 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
         if cuts:
             _subtract(body, _unionAll(cuts))
 
-        if p['detent']:
+        if cab['detentR'] > 0:
             bumps = []
             for c in range(len(cab['columns'])):
                 for r in range(len(cab['rows'])):
                     for strip in L.contactStrips(cab, c, r):
-                        bumps.append(_detentCylinder(strip, cab['detentY'], L.DETENT_RADIUS))
+                        bumps.append(_detentCylinder(strip, cab['detentY'], cab['detentR']))
             _union(body, _unionAll(bumps))
 
         holes = []
@@ -274,7 +291,7 @@ def buildInsert(des: adsk.fusion.Design, cabParams: dict, insertParams: dict) ->
         # Front: label band + handle band, wire outlets.
         labelRect, band, blocked = frontLayout(ip, fx0, fx1, fz0, fz1)
         adds, cuts = [], []
-        handleX = _handle(ip, band, fz1, yF, yB, z0, z1, tw, adds, cuts)
+        handleX = _handle(ip, band, (fx0, fx1, fz0, fz1), yF, yB, z0, z1, tw, adds, cuts)
         _label(ip, labelRect, yF, adds, cuts)
         _wireHoles(ip, band, ([handleX] if handleX else []) + blocked, yF, yB, cuts)
         if adds:
@@ -283,15 +300,23 @@ def buildInsert(des: adsk.fusion.Design, cabParams: dict, insertParams: dict) ->
         # Detent: notch where the bump rests when closed, ridge, relief channel
         # behind it; with a stop, the channel ends before the back (solid land
         # that catches on the bump when pulled out).
-        r = L.DETENT_RADIUS + L.DETENT_CLEARANCE
+        r = cab['detentR'] + L.DETENT_CLEARANCE
         yd = cab['detentY']
         chEnd = y1 - L.STOP_LAND if ip['stop'] else y1 + 1.0
+        ribs = []
         for strip in ins['contact']:
             xa, xb, z = strip
+            if not cab['grooved'] and tf < r + 0.2:
+                # Thin floor: a rib inside over the notch/channel so the floor
+                # is never cut through there.
+                ribs.append(_box(max(xa - 0.1, x0), min(xb + 0.1, x1), yd - r - 0.1,
+                                 min(max(chEnd, yd + r + 0.1), py1), z0, z0 + r + 0.2))
             cuts.append(_detentCylinder((xa - _EPS, xb + _EPS, z), yd, r))
             chStart = yd + r + L.DETENT_RIDGE
             if chEnd > chStart:
                 cuts.append(_box(xa - _EPS, xb + _EPS, chStart, chEnd, z - r, z + r))
+        if ribs:
+            _union(body, _unionAll(ribs))
         if cuts:
             _subtract(body, _unionAll(cuts))
 
@@ -338,6 +363,9 @@ def frontLayout(ip, fx0, fx1, fz0, fz1):
         pos = L.LABEL_BOTTOM if stacked else L.LABEL_LEFT
     if notch and pos == L.LABEL_TOP:
         pos = L.LABEL_BOTTOM
+    if ip['handle'] == L.HANDLE_KNOB and pos in (L.LABEL_BOTTOM, L.LABEL_TOP):
+        # The knob's stand goes down to the bottom edge.
+        pos = L.LABEL_LEFT
 
     if pos in (L.LABEL_BOTTOM, L.LABEL_TOP):
         lh = max(0.4, min(lhWanted, H * 0.45))
@@ -426,14 +454,16 @@ def _wireHoles(ip, band, blocked, yF, yB, cuts):
             cuts.append(_cone((x, yF - _EPS, zc), rad + 0.1 + _EPS, (x, yF + 0.1, zc), rad))
 
 
-def _handle(ip, band, frontTop, yF, yB, zFloor, zTop, tw, adds, cuts):
+def _handle(ip, band, front, yF, yB, zFloor, zTop, tw, adds, cuts):
     """Add the handle to adds/cuts. band = (x0, x1, z0, z1) on the front face
-    at y=yF (outside is -y), front material ends at y=yB. zFloor/zTop: the
-    insert's bottom/top. Returns the handle's x range (or None)."""
+    at y=yF (outside is -y), front material ends at y=yB. front = the whole
+    front rectangle (x0, x1, z0, z1); nothing may leave it in z. zFloor/zTop:
+    the insert's bottom (print bed) / rim. Returns the handle's x range."""
     kind = ip['handle']
     if kind == L.HANDLE_NONE:
         return None
     bx0, bx1, bz0, bz1 = band
+    frontTop = front[3]
     W, H = bx1 - bx0, bz1 - bz0
     xc, zc = (bx0 + bx1) / 2, (bz0 + bz1) / 2
     w = max(0.8, min(float(ip['handleWidth']), W - 0.8))
@@ -471,45 +501,204 @@ def _handle(ip, band, frontTop, yF, yB, zFloor, zTop, tw, adds, cuts):
         return (xc - rad, xc + rad)
 
     if kind == L.HANDLE_SLOT:
-        rad = h / 2
-        half = max(0.0, w / 2 - rad)
-        cuts.append(_box(xc - half, xc + half, yF - 0.1, yB + _EPS, zc - rad, zc + rad))
-        for x in (xc - half, xc + half):
-            cuts.append(_cylinderAxis((x, yF - 0.1, zc), (x, yB + _EPS, zc), rad))
+        rad = min(h, w) / 2
+        half = w / 2 - rad
+        if half > 0.01:
+            cuts.append(_box(xc - half, xc + half, yF - 0.1, yB + _EPS, zc - rad, zc + rad))
+            for x in (xc - half, xc + half):
+                cuts.append(_cylinderAxis((x, yF - 0.1, zc), (x, yB + _EPS, zc), rad))
+        else:
+            cuts.append(_cylinderAxis((xc, yF - 0.1, zc), (xc, yB + _EPS, zc), rad))
         return (xc - w / 2, xc + w / 2)
 
-    if kind in (L.HANDLE_LIP, L.HANDLE_BAR):
-        # Top plate + outer grip bar, hollow behind the bar and open at the
-        # bottom. Underside of the bar at 45°, the cavity roof is a bridge.
-        # Lip: open at the sides too; bar: closed by posts (D-handle).
-        topT, barT = 0.3, 0.35
-        p = max(barT + 0.8, float(ip['handleDepth']))
-        hh = max(topT + 0.5, min(h, H - 0.3))
-        zt = min(bz1 - 0.1, zc + (hh + p) / 2)
-        p = max(barT + 0.5, min(p, zt - hh - bz0))
-        grip = _prismYZ(xc - w / 2, xc + w / 2, yF - p, yF + _EPS, zt - hh - p, zt,
-                        [((0, yF - p, zt - hh), (0, -1, -1))])
-        post = 0.5 if kind == L.HANDLE_BAR and w > 2.0 else -0.1
-        _subtract(grip, _box(xc - w / 2 + post, xc + w / 2 - post,
-                             yF - p + barT, yF, zt - hh - p - 1.0, zt - topT))
-        adds.append(grip)
+    if kind in (L.HANDLE_PULL, L.HANDLE_LEDGE):
+        grip = (_pullHandle if kind == L.HANDLE_PULL else _ledgeHandle)(ip, xc, w, bz0, bz1, yF)
+        adds.append(_clipToFront(grip, front, yF))
         return (xc - w / 2, xc + w / 2)
 
     if kind == L.HANDLE_KNOB:
-        rk = max(0.3, min(w / 2, (H - 0.2) / (1 + _SQRT2)))
-        p = float(ip['handleDepth'])
-        kz = zc + (rk * _SQRT2 - rk) / 2
-        knob = _cylinderAxis((xc, yF + _EPS, kz), (xc, yF - p, kz), rk)
-        # Teardrop: 45° diamond below the axis so it prints without support.
-        c = 1 / _SQRT2
-        obb = adsk.core.OrientedBoundingBox3D.create(
-            adsk.core.Point3D.create(xc, yF - p / 2 + _EPS / 2, kz),
-            adsk.core.Vector3D.create(c, 0, c), adsk.core.Vector3D.create(0, 1, 0),
-            2 * rk, p + _EPS, 2 * rk)
-        diamond = _tmgr().createBox(obb)
-        _subtract(diamond, _box(xc - 3 * rk, xc + 3 * rk, yF - p - 1.0, yF + 1.0, kz, kz + 3 * rk))
-        _union(knob, diamond)
-        adds.append(knob)
+        knob, rk = _knob(ip, xc, w, front, zFloor, yF)
+        adds.append(_clipToFront(knob, front, yF))
         return (xc - rk, xc + rk)
 
     return None
+
+
+def _clipToFront(body, front, yF):
+    """Keep a protruding handle within the front's height (and in front of
+    it), so it can never reach into the cabinet or the row below / above."""
+    fx0, fx1, fz0, fz1 = front
+    _tmgr().booleanOperation(body, _box(fx0 - 1, fx1 + 1, yF - 20.0, yF + _EPS, fz0, fz1),
+                             adsk.fusion.BooleanTypes.IntersectionBooleanType)
+    return body
+
+
+def _alignTop(ip, bz0, bz1, extent):
+    """Top z of a protruding handle `extent` high, placed top / centre /
+    bottom in the band (0.1 margin)."""
+    align = ip.get('handleAlign', L.ALIGN_TOP)
+    if align == L.ALIGN_TOP:
+        return bz1 - 0.1
+    if align == L.ALIGN_BOTTOM:
+        return min(bz1 - 0.1, bz0 + 0.1 + extent)
+    return min(bz1 - 0.1, (bz0 + bz1) / 2 + extent / 2)
+
+
+def _pullHandle(ip, xc, w, bz0, bz1, yF):
+    """Hollow grip standing out of the front, open at the bottom.
+
+    Profile: top plate, outer grip face, 45° underside back to the front.
+    Everything is configurable, so it covers a thin lip that just sticks out
+    a little, a hook lip (side walls 0 = open), a D-shaped bar handle and the
+    scoop (low grip face, triangular side walls). The cavity roof is a bridge
+    between the side walls, everything else is vertical or 45°. Fitted into
+    the band height."""
+    topT = max(0.08, float(ip['pullTop']))
+    barT = max(0.08, float(ip['pullBar']))
+    side = max(0.0, float(ip['pullSides']))
+    if side > 0 and w - 2 * side < 0.4:
+        side = 0.0
+    hh = max(topT + 0.05, float(ip['pullGrip']))
+    p = max(barT + 0.2, float(ip['handleDepth']))
+    avail = (bz1 - bz0) - 0.2
+    # Side walls keep the whole 45° wedge (p high); open sides only the bar.
+    wedge = p if side > 0 else barT
+    if hh + wedge > avail:
+        hh = max(topT + 0.05, avail - wedge)
+    if side > 0 and hh + p > avail:
+        p = max(barT + 0.2, avail - hh)
+        wedge = p
+    zt = _alignTop(ip, bz0, bz1, hh + wedge)
+    grip = _prismYZ(xc - w / 2, xc + w / 2, yF - p, yF + _EPS, zt - hh - p, zt,
+                    [((0, yF - p, zt - hh), (0, -1, -1))])
+    if p - barT > 0.05:
+        inner = side if side > 0 else -0.1
+        _subtract(grip, _box(xc - w / 2 + inner, xc + w / 2 - inner,
+                             yF - p + barT, yF, zt - hh - p - 1.0, zt - topT))
+    return grip
+
+
+def _ledgeHandle(ip, xc, w, bz0, bz1, yF):
+    """Closed wedge (45° underside, no cavity) with a finger groove on top.
+
+    Defined from the top only: groove width + depth and the rim around it.
+    Protrusion = rim + groove + rim; the outer face is just high enough that
+    the 45° underside stays at least one rim below the groove."""
+    rim = max(0.08, float(ip['ledgeRim']))
+    wg = max(0.2, float(ip['fingerGrooveWidth']))
+    dg = max(0.05, float(ip['fingerGrooveDepth']))
+    avail = (bz1 - bz0) - 0.2
+
+    def size(wg, dg):
+        hh = max(rim, dg - wg / 2 + rim * 0.5)
+        return hh, 2 * rim + wg
+    hh, p = size(wg, dg)
+    if hh + p > avail:
+        wg = max(0.3, wg - (hh + p - avail))
+        hh, p = size(wg, dg)
+        if hh + p > avail:
+            dg = max(0.05, dg - (hh + p - avail))
+            hh, p = size(wg, dg)
+    zt = _alignTop(ip, bz0, bz1, hh + p)
+    ledge = _prismYZ(xc - w / 2, xc + w / 2, yF - p, yF + _EPS, zt - hh - p, zt,
+                     [((0, yF - p, zt - hh), (0, -1, -1))])
+    yc = yF - rim - wg / 2
+    xa, xb = xc - w / 2 - 0.1, xc + w / 2 + 0.1
+    if dg <= wg / 2:
+        # Shallow: circular segment, exactly wg wide and dg deep.
+        rad = (wg * wg / 4 + dg * dg) / (2 * dg)
+        _subtract(ledge, _cylinderAxis((xa, yc, zt - dg + rad), (xb, yc, zt - dg + rad), rad))
+    else:
+        # Deep: U shape (round bottom, straight sides).
+        rad = wg / 2
+        _subtract(ledge, _cylinderAxis((xa, yc, zt - dg + rad), (xb, yc, zt - dg + rad), rad))
+        _subtract(ledge, _box(xa, xb, yc - rad, yc + rad, zt - dg + rad, zt + 1.0))
+    return ledge
+
+
+def _knobStand(xc, r, kz, zFloor, ya, yb):
+    """Trapezoid under a horizontal round knob, from the print bed up to the
+    circle's 45° points. Never wider than the circle, so the round part only
+    overhangs at <= 45° and nothing floats."""
+    k = r / _SQRT2
+    top = kz - k
+    if top - zFloor < 0.02:
+        return None
+    hgt = top - zFloor
+    run = r - k
+    return _prismXZ(xc - r, xc + r, min(ya, yb), max(ya, yb), zFloor, top + _EPS,
+                    [((xc - r, 0, zFloor), (-hgt, 0, run)),
+                     ((xc + r, 0, zFloor), (hgt, 0, run))])
+
+
+KNOB_FIN = 0.04       # breakaway fin thickness (one 0.4 mm line)
+KNOB_FIN_GAP = 0.05   # fins keep this gap to the front face
+
+
+def _knobFins(xc, r, kz, zFloor, ya, yb):
+    """Breakaway supports: thin vertical fins from the print bed up to the
+    underside of the round part. They stand free of the front face, so they
+    snap off cleanly."""
+    if kz - r - zFloor < 0.02:
+        return None
+    offsets = (0.0,) if r < 0.6 else (-0.55 * r, 0.0, 0.55 * r)
+    fins = []
+    for dx in offsets:
+        topZ = kz - (r * r - dx * dx) ** 0.5 + _EPS
+        fins.append(_box(xc + dx - KNOB_FIN / 2, xc + dx + KNOB_FIN / 2,
+                         min(ya, yb), max(ya, yb), zFloor, topZ))
+    return _unionAll(fins)
+
+
+def _support(support, xc, r, kz, zFloor, ya, yb):
+    if support == L.KNOB_SUPPORT_STAND:
+        return _knobStand(xc, r, kz, zFloor, ya, yb)
+    if support == L.KNOB_SUPPORT_THIN:
+        return _knobFins(xc, r, kz, zFloor, ya, yb)
+    return None
+
+
+def _knob(ip, xc, w, front, zFloor, yF):
+    """Round knob variants, with a stand, breakaway fins or no support.
+    Returns (body, largest radius)."""
+    fx0, fx1, fz0, fz1 = front
+    style = ip.get('knobStyle', L.KNOB_ROUND)
+    support = ip.get('knobSupport', L.KNOB_SUPPORT_STAND)
+    p = max(0.4, float(ip['handleDepth']))
+    kz = (fz0 + fz1) / 2
+    rMax = max(0.2, min(kz - zFloor, fz1 - kz - 0.1))
+    rk = max(0.2, min(w / 2, rMax))
+    yIn = yF + _EPS
+    # Fins stay clear of the front; a stand may grow out of it.
+    yFree = yF - KNOB_FIN_GAP if support == L.KNOB_SUPPORT_THIN else yIn
+    parts = []
+
+    if style == L.KNOB_MUSHROOM:
+        # Thin neck, wide cap in front of it to grip behind.
+        rNeck = max(0.2, rk * 0.5)
+        neckLen = max(0.3, p * 0.6)
+        knob = _cylinderAxis((xc, yIn, kz), (xc, yF - neckLen, kz), rNeck)
+        _union(knob, _cylinderAxis((xc, yF - neckLen + _EPS, kz), (xc, yF - p, kz), rk))
+        parts.append(_support(support, xc, rNeck, kz, zFloor, yFree, yF - neckLen + _EPS))
+        parts.append(_support(support, xc, rk, kz, zFloor, yF - neckLen + _EPS, yF - p))
+    else:
+        knob = _cylinderAxis((xc, yIn, kz), (xc, yF - p, kz), rk)
+        if style == L.KNOB_SPOOL:
+            # Round U groove around the middle, like a hose clamped on.
+            rg = max(0.1, min(p / 4, rk / 3))
+            try:
+                torus = _tmgr().createTorus(adsk.core.Point3D.create(xc, yF - p / 2, kz),
+                                            adsk.core.Vector3D.create(0, 1, 0), rk, rg)
+                _subtract(knob, torus)
+            except Exception:
+                # Fallback: square groove instead of a round one.
+                gplog.logExc('spool knob torus')
+                ring = _cylinderAxis((xc, yF - p / 2 - rg, kz), (xc, yF - p / 2 + rg, kz), rk + 0.1)
+                _subtract(ring, _cylinderAxis((xc, yF - p / 2 - rg - 0.1, kz), (xc, yF - p / 2 + rg + 0.1, kz), rk - rg))
+                _subtract(knob, ring)
+        parts.append(_support(support, xc, rk, kz, zFloor, yFree, yF - p))
+
+    for part in parts:
+        if part is not None:
+            _union(knob, part)
+    return knob, rk

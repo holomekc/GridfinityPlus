@@ -31,7 +31,7 @@ app = adsk.core.Application.get()
 ui = app.userInterface
 
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_cmdCabinet'
-CMD_NAME = 'Gridfinity Cabinet'
+CMD_NAME = 'Gridfinity+ Cabinet'
 CMD_Description = 'Create a stackable Gridfinity cabinet for drawers and boxes'
 IS_PROMOTED = True
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -92,9 +92,9 @@ def stop():
 def _resolveEdited():
     try:
         for i in range(ui.activeSelections.count):
-            entity = ui.activeSelections.item(i).entity
-            if box.CABINET.isKind(entity):
-                return adsk.fusion.CustomFeature.cast(entity)
+            cf = box.CABINET.fromSelection(ui.activeSelections.item(i).entity)
+            if cf is not None:
+                return cf
     except Exception:
         pass
     return None
@@ -138,6 +138,7 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     stored = box.CABINET.readParams(_editedFeature) if _editedFeature else None
     if stored:
         gplog.session(f'CABINET dialog EDIT "{_editedFeature.name}"')
+        args.command.okButtonText = 'Update cabinet'
         p = L.withDefaults(stored, L.CABINET_DEFAULTS)
     else:
         _editedFeature = None
@@ -214,6 +215,9 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'grooveDepth', 'Groove depth', p, units, minimum=0.1, maximum=0.5)
     form.boolean(g, 'detent', 'Click detent', p,
                  'Small bump near the front: inserts click shut, with a stop they cannot fall out')
+    form.length(g, 'detentHeight', 'Detent height', p, units, minimum=0.02, maximum=0.15,
+                tooltip='How far the bump sticks up (default 0.6 mm). Higher = firmer click. '
+                        'The insert height clearance grows with it.')
 
     # --- walls
     wallGroup = inputs.addGroupCommandInput('wallGroup', 'Walls')
@@ -294,7 +298,7 @@ def _body(des, p):
 
 
 def _syncVisibility(inputs):
-    p = form.read(inputs, ('heightMode', 'guide', 'feet', 'rows', 'rowWeights', 'topType'))
+    p = form.read(inputs, ('heightMode', 'guide', 'feet', 'rows', 'rowWeights', 'topType', 'detent'))
     byUnits = p['heightMode'] == HEIGHT_MODES[0]
     form.setVisible(inputs, 'heightUnits', byUnits)
     form.setVisible(inputs, 'heightMm', not byUnits)
@@ -305,6 +309,7 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'magnets', bool(p['feet']))
     form.setVisible(inputs, 'screws', bool(p['feet']))
     form.setVisible(inputs, 'topEdge', p['topType'] == L.TOP_GRID)
+    form.setVisible(inputs, 'detentHeight', bool(p['detent']))
     rows = inputs.itemById('rows')
     if rows is not None:
         rows.isEnabled = not str(p['rowWeights'] or '').strip()
@@ -333,7 +338,7 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     if changed.id == IN_ROTATE:
         _cycleRotation(inputs)
         return
-    if changed.id in ('heightMode', 'guide', 'feet', 'rowWeights', 'topType'):
+    if changed.id in ('heightMode', 'guide', 'feet', 'rowWeights', 'topType', 'detent'):
         _syncVisibility(inputs)
     if changed.id == 'heightMode':
         # Carry the height across modes.

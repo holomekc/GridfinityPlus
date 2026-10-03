@@ -35,7 +35,7 @@ ui = app.userInterface
 
 # *** The command identity information. ***
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_cmdBin'
-CMD_NAME = 'Gridfinity Bin'
+CMD_NAME = 'Gridfinity+ Bin'
 CMD_Description = 'Create a Gridfinity bin and snap it onto a baseplate'
 
 commandUIState = CommandUiState(CMD_NAME)
@@ -553,8 +553,20 @@ def _resolveEditedBinFeature():
             cf = adsk.fusion.CustomFeature.cast(entity)
             if cf and cf.definition.id == binFeature.FEATURE_ID:
                 return cf
+            # A selected bin body (right-click "Edit" in Part designs).
+            body = adsk.fusion.BRepBody.cast(entity)
+            if body:
+                native = body.nativeObject if body.nativeObject else body
+                feats = native.parentComponent.features.customFeatures
+                for j in range(feats.count):
+                    cf = feats.item(j)
+                    if cf.definition.id != binFeature.FEATURE_ID:
+                        continue
+                    base = binFeature._findBaseFeature(cf)
+                    if base and any(b == native for b in base.bodies):
+                        return cf
     except Exception:
-        pass
+        gplog.logExc('bin: resolve edited feature')
     return None
 
 
@@ -588,12 +600,20 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     global _editedFeature, _plateChoices
 
     args.command.setDialogInitialSize(400, 500)
+    # Inputs registered by the previous (closed) dialog are dead; writing to
+    # them aborted this dialog's setup, so only the first bin dialog after
+    # loading the add-in worked.
+    staleStates = [commandUIState, actualDimensionsTableUiState, actualCompartmentDimensionsUiState]
+    for state in staleStates + commandCompartmentsTableUIState:
+        state.forgetInputs()
 
     # Edit mode? (double-click on a bin custom feature routes here)
     _editedFeature = _resolveEditedBinFeature()
     storedParams = binFeature.readParams(_editedFeature) if _editedFeature else None
     if storedParams:
         gplog.session(f'BIN dialog opened in EDIT mode for "{_editedFeature.name}"')
+        # Selected bin + Bin button = edit that bin; make that obvious.
+        args.command.okButtonText = 'Update bin'
         # Seed the whole dialog from the stored state.
         try:
             if 'geom' in storedParams:
@@ -622,6 +642,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     des = adsk.fusion.Design.cast(app.activeProduct)
     plates = binFeature.listPlates(des) if des else []
     _plateChoices = {label: (token, grid) for label, token, grid in plates}
+    gplog.log(f'bin dialog: plates found={[label for label, _, _ in plates]}')
     gridGroup = inputs.addGroupCommandInput(GRID_PLACEMENT_GROUP, 'Placement')
     gridGroup.isExpanded = True
     gridGroup.children.addTextBoxCommandInput(
@@ -1023,10 +1044,12 @@ def command_mouse_click(args: adsk.core.MouseEventArgs):
             return
         params = _placementParams(inputs)
         if not params['plateToken']:
+            gplog.log('bin mouseClick: ignored, no baseplate selected in the dialog')
             return
         des = adsk.fusion.Design.cast(app.activeProduct)
         occ, grid, comp = binFeature.resolvePlate(des, params['plateToken'])
         if grid is None:
+            gplog.log('bin mouseClick: ignored, selected baseplate not found')
             return
         vp = args.viewport
         if vp is None:

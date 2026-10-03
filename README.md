@@ -25,6 +25,10 @@ editable after the fact.
   - A side is always either border or partial cell, never both.
 - **Placement**: pick a planar face or construction plane and the plate is centred on it. Optionally pick your own
   anchor point (centre or corner), rotate in 90° steps and offset along X / Y / Z of the chosen plane.
+- **Split for printing**: plates bigger than the print bed are cut into tiles (max tile width × depth). Seams run
+  between cells, tiles are as even as possible. Optional vertical dovetails (one per cell along each seam): push the
+  tiles together from the top. Every tile is its own body (`… - tile 1/6`), assembled in place — export each body
+  for printing.
 - **Fast live preview** that updates while you type.
 - **Works in Part Design documents** (single-component designs), including several plates in one part.
 

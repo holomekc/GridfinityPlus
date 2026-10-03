@@ -76,6 +76,7 @@ class FeatureKind:
             self._definition = adsk.fusion.CustomFeatureDefinition.create(
                 self.featureId, self.featureName, iconFolder)
             self._definition.editCommandId = editCommandId
+            gplog.log(f'register: {self.featureId} edit={self._definition.editCommandId}')
             self._handler = _ComputeHandler()
             self._definition.customFeatureCompute.add(self._handler)
         return self._definition
@@ -106,6 +107,28 @@ class FeatureKind:
             except Exception:
                 pass
         return result
+
+    def fromSelection(self, entity):
+        """This kind's custom feature for a selected timeline node / feature
+        or one of its bodies, else None."""
+        if self.isKind(entity):
+            return adsk.fusion.CustomFeature.cast(entity)
+        body = adsk.fusion.BRepBody.cast(entity)
+        if not body:
+            return None
+        try:
+            native = body.nativeObject if body.nativeObject else body
+            feats = native.parentComponent.features.customFeatures
+            for i in range(feats.count):
+                cf = feats.item(i)
+                if not self.isKind(cf):
+                    continue
+                for b in self.bodies(cf):
+                    if b == native:
+                        return cf
+        except Exception:
+            gplog.logExc('fromSelection')
+        return None
 
     def bodies(self, cf):
         base = _findBaseFeature(cf)

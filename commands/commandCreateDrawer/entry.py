@@ -29,7 +29,7 @@ app = adsk.core.Application.get()
 ui = app.userInterface
 
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_cmdCabinetInsert'
-CMD_NAME = 'Gridfinity Drawer'
+CMD_NAME = 'Gridfinity+ Drawer'
 CMD_Description = 'Create a drawer or box for a Gridfinity cabinet'
 IS_PROMOTED = True
 WORKSPACE_ID = 'FusionSolidEnvironment'
@@ -83,9 +83,9 @@ def stop():
 def _selected(kind):
     try:
         for i in range(ui.activeSelections.count):
-            entity = ui.activeSelections.item(i).entity
-            if kind.isKind(entity):
-                return adsk.fusion.CustomFeature.cast(entity)
+            cf = kind.fromSelection(ui.activeSelections.item(i).entity)
+            if cf is not None:
+                return cf
     except Exception:
         pass
     return None
@@ -130,6 +130,7 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     preselected = None
     if stored:
         gplog.session(f'INSERT dialog EDIT "{_editedFeature.name}"')
+        args.command.okButtonText = 'Update drawer'
         p = L.withDefaults(stored, L.INSERT_DEFAULTS)
         preselected = box.resolveCabinet(des, stored.get('cabinetToken'))
     else:
@@ -183,13 +184,34 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     g = inputs.addGroupCommandInput('handleGroup', 'Handle').children
     form.choice(g, 'handle', 'Type', p, L.HANDLE_TYPES,
                 'Recessed pull: hollow pocket behind the front, flush.\n'
-                'Hook lip / Bar handle: hollow grip in front, open at the bottom.\n'
-                'Top notch, Finger hole, Knob. All print without supports.')
+                'Pull handle: hollow grip standing out, open at the bottom - from a thin lip\n'
+                '  to a scoop or D-handle (grip face, thicknesses and side walls adjustable).\n'
+                'Grooved ledge: closed 45° wedge with a finger groove on top (set groove + rim).\n'
+                'Top notch, Finger hole, Knob.')
+    form.choice(g, 'knobStyle', 'Knob style', p, L.KNOB_STYLES,
+                'Round, Mushroom (thin neck, wide cap), Spool (round U groove in the middle)')
+    form.choice(g, 'knobSupport', 'Knob support', p, L.KNOB_SUPPORTS,
+                'Stand: trapezoid down to the bottom edge, stays (no supports needed).\n'
+                'Thin breakaway: 0.4 mm fins down to the bed, snap them off after printing.\n'
+                'None: just the knob (use slicer supports or print the drawer on its back).')
     form.length(g, 'handleWidth', 'Width', p, units, minimum=0.6, tooltip='Knob: diameter')
     form.length(g, 'handleHeight', 'Height', p, units, minimum=0.4,
-                tooltip='Opening / grip height (notch: how deep it is cut)')
+                tooltip='Opening height (notch: how deep it is cut)')
     form.length(g, 'handleDepth', 'Depth', p, units, minimum=0.3,
-                tooltip='Recessed pull: how deep the pocket goes in. Lip / bar / knob: how far it sticks out')
+                tooltip='Recessed pull: how deep the pocket goes in. Others: how far it sticks out')
+    form.choice(g, 'handleAlign', 'Position', p, L.HANDLE_ALIGNS)
+    form.length(g, 'pullGrip', 'Grip face height', p, units, minimum=0.1,
+                tooltip='Height of the vertical outer face (small = thin lip, large = bar)')
+    form.length(g, 'pullBar', 'Grip thickness', p, units, minimum=0.08, maximum=1.0,
+                tooltip='Thickness of the outer grip bar')
+    form.length(g, 'pullTop', 'Top thickness', p, units, minimum=0.08, maximum=1.0)
+    form.length(g, 'fingerGrooveWidth', 'Groove width', p, units, minimum=0.2, maximum=3.0,
+                tooltip='Width of the finger groove on top (front to back)')
+    form.length(g, 'fingerGrooveDepth', 'Groove depth', p, units, minimum=0.05, maximum=2.0)
+    form.length(g, 'ledgeRim', 'Rim', p, units, minimum=0.08, maximum=1.0,
+                tooltip='Material around the groove on top. The 45° underside follows from these.')
+    form.length(g, 'pullSides', 'Side walls', p, units, minimum=0.0, maximum=1.0,
+                tooltip='0 = open at the sides (hook lip); > 0 closed side walls (scoop / D-handle)')
 
     # --- label & front extras
     g = inputs.addGroupCommandInput('labelGroup', 'Label & front').children
@@ -275,8 +297,17 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'divY', compartments)
     hasHandle = p['handle'] != L.HANDLE_NONE
     form.setVisible(inputs, 'handleWidth', hasHandle)
-    form.setVisible(inputs, 'handleHeight', hasHandle)
-    form.setVisible(inputs, 'handleDepth', hasHandle and p['handle'] not in (L.HANDLE_SLOT, L.HANDLE_NOTCH))
+    kind = p['handle']
+    form.setVisible(inputs, 'handleHeight', kind in (L.HANDLE_RECESS, L.HANDLE_NOTCH, L.HANDLE_SLOT))
+    form.setVisible(inputs, 'knobStyle', kind == L.HANDLE_KNOB)
+    form.setVisible(inputs, 'knobSupport', kind == L.HANDLE_KNOB)
+    form.setVisible(inputs, 'handleDepth', hasHandle and kind not in (L.HANDLE_SLOT, L.HANDLE_NOTCH, L.HANDLE_LEDGE))
+    form.setVisible(inputs, 'pullGrip', kind == L.HANDLE_PULL)
+    for inputId in ('fingerGrooveWidth', 'fingerGrooveDepth', 'ledgeRim'):
+        form.setVisible(inputs, inputId, kind == L.HANDLE_LEDGE)
+    form.setVisible(inputs, 'handleAlign', kind in (L.HANDLE_PULL, L.HANDLE_LEDGE))
+    for inputId in ('pullBar', 'pullTop', 'pullSides'):
+        form.setVisible(inputs, inputId, kind == L.HANDLE_PULL)
     hasLabel = p['label'] != L.LABEL_NONE
     for inputId in ('labelPos', 'labelWidth', 'labelHeight'):
         form.setVisible(inputs, inputId, hasLabel)

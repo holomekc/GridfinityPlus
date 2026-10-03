@@ -19,6 +19,7 @@ import adsk.core, adsk.fusion
 from ...lib.gridfinityUtils import const
 from ...lib.gridfinityUtils import placement
 from ...lib.gridfinityUtils import plateLayout
+from ...lib.gridfinityUtils import plateSplit
 from ...lib.gridfinityUtils import gplog
 from ...lib.gridfinityUtils.const import DIMENSION_DEFAULT_WIDTH_UNIT
 
@@ -35,6 +36,13 @@ STYLE_GROUP = 'plate_features'
 MAGNET_GROUP = 'magnet_cutout_group'
 SCREW_GROUP = 'screw_hole_group'
 ADVANCED_GROUP = 'advanced_plate_size_group'
+SPLIT_GROUP = 'split_group'
+SPLIT_MODE = 'split_mode'
+SPLIT_MAX_W = 'split_max_width'
+SPLIT_MAX_D = 'split_max_depth'
+SPLIT_CONNECTOR = 'split_connector'
+SPLIT_CLEARANCE = 'split_clearance'
+SPLIT_INFO = 'split_info'
 
 # ------------------------------------------------------- non-table input ids
 SIZE_INFO_SIZE = 'size_info_size'
@@ -160,6 +168,22 @@ FIELDS = [
     (WITH_CONNECTORS, 'hasConnectionHoles', 'bool', 'Connector holes', False, dict(group=ADVANCED_GROUP,
         tooltip='Holes in the side walls to pin plates together (Skeletonized)')),
     (CONNECTOR_DIAMETER, 'connectionHoleSize', 'length', 'Connector hole diameter', const.DIMENSION_PLATE_CONNECTION_SCREW_HOLE_DIAMETER, dict(group=ADVANCED_GROUP, min=0.1, max=0.5)),
+
+    (SPLIT_MODE, plateSplit.KEY_MODE, 'choice', 'Split', plateSplit.SPLIT_OFF, dict(
+        group=SPLIT_GROUP, choices=plateSplit.SPLIT_MODES,
+        tooltip='Max print size: cut the plate into tiles that fit your print bed.\n'
+                'Seams run between cells; the tiles stay assembled in the model\n'
+                '(one body per tile, export each one for printing).')),
+    (SPLIT_MAX_W, plateSplit.KEY_MAX_W, 'length', 'Max tile width', plateSplit.DEFAULTS[plateSplit.KEY_MAX_W], dict(
+        group=SPLIT_GROUP, min=4.2, tooltip='Usable print bed width')),
+    (SPLIT_MAX_D, plateSplit.KEY_MAX_D, 'length', 'Max tile depth', plateSplit.DEFAULTS[plateSplit.KEY_MAX_D], dict(
+        group=SPLIT_GROUP, min=4.2, tooltip='Usable print bed depth')),
+    (SPLIT_CONNECTOR, plateSplit.KEY_CONNECTOR, 'choice', 'Connectors', plateSplit.CONN_DOVETAIL, dict(
+        group=SPLIT_GROUP, choices=plateSplit.CONNECTORS,
+        tooltip='Dovetail: one per cell along each seam, through the full height.\n'
+                'Push the tiles together from the top; they then hold sideways.')),
+    (SPLIT_CLEARANCE, plateSplit.KEY_CLEARANCE, 'length', 'Connector clearance', plateSplit.DEFAULTS[plateSplit.KEY_CLEARANCE], dict(
+        group=SPLIT_GROUP, min=0.0, max=0.1, tooltip='Gap around the dovetails and along the seams (default 0.15 mm)')),
 ]
 
 FIELD_BY_ID = {f[0]: f for f in FIELDS}
@@ -172,6 +196,7 @@ GROUPS = [
     (STYLE_GROUP, 'Style', None),
     (MAGNET_GROUP, 'Magnets', STYLE_GROUP),
     (SCREW_GROUP, 'Screws', STYLE_GROUP),
+    (SPLIT_GROUP, 'Split for printing', None),
     (ADVANCED_GROUP, 'Advanced', None),
 ]
 
@@ -234,6 +259,10 @@ def build(inputs: adsk.core.CommandInputs, values: dict, groupExpanded=None,
                 _addField(g.children, FIELD_BY_ID[fid], values, units, created)
             continue
         _addFields(g.children, gid, values, units, created)
+        if gid == SPLIT_GROUP:
+            info = g.children.addStringValueInput(SPLIT_INFO, 'Tiles', '')
+            info.isReadOnly = True
+            created[SPLIT_INFO] = info
 
     about = inputs.addGroupCommandInput(INFO_GROUP, 'About')
     about.isExpanded = groupExpanded(INFO_GROUP) if groupExpanded else False
@@ -386,6 +415,15 @@ def refresh(inputs: adsk.core.CommandInputs):
         _setText(inputs, SIZE_INFO_CELLS, '{} x {}'.format(lo['fullX'], lo['fullY']))
     except Exception:
         gplog.logExc('plateDialog.refresh: size info')
+    try:
+        mode = adsk.core.DropDownCommandInput.cast(_get(inputs, SPLIT_MODE))
+        on = bool(mode and mode.selectedItem and mode.selectedItem.name == plateSplit.SPLIT_MAX)
+        for fid in (SPLIT_MAX_W, SPLIT_MAX_D, SPLIT_CONNECTOR, SPLIT_CLEARANCE, SPLIT_INFO):
+            show(fid, on)
+        if on:
+            _setText(inputs, SPLIT_INFO, plateSplit.describe(readParams(inputs)))
+    except Exception:
+        gplog.logExc('plateDialog.refresh: split info')
 
 
 def _setText(inputs, fid, text):

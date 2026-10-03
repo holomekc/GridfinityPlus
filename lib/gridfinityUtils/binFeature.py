@@ -72,6 +72,7 @@ def register(editCommandId: str, iconFolder: str):
         return _definition
     _definition = adsk.fusion.CustomFeatureDefinition.create(FEATURE_ID, FEATURE_NAME, iconFolder)
     _definition.editCommandId = editCommandId
+    gplog.log(f'register: {FEATURE_ID} edit={_definition.editCommandId}')
     _computeHandler = _BinComputeHandler()
     _definition.customFeatureCompute.add(_computeHandler)
     return _definition

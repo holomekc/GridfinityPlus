@@ -33,6 +33,29 @@ def logExc(prefix: str):
 def session(title: str):
     log('=' * 60)
     log(f'SESSION: {title}')
+    log(f'  document: {documentInfo()}')
+
+
+def documentInfo() -> str:
+    """Document name, design type and design intent (Part / Assembly /
+    Hybrid) - custom feature editing depends on them."""
+    try:
+        app = adsk.core.Application.get()
+        des = adsk.fusion.Design.cast(app.activeProduct)
+        if des is None:
+            return 'no design'
+        intent = '?'
+        try:
+            types = adsk.fusion.DesignIntentTypes
+            names = {getattr(types, n): n.replace('DesignIntentType', '')
+                     for n in dir(types) if n.endswith('DesignIntentType')}
+            intent = names.get(des.designIntent, str(des.designIntent))
+        except Exception:
+            intent = 'n/a'
+        dtype = 'Parametric' if des.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
+        return f'"{app.activeDocument.name}" type={dtype} intent={intent}'
+    except Exception as err:
+        return f'unknown ({err})'
 
 
 class timed:

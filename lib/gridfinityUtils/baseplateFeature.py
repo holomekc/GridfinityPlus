@@ -32,6 +32,7 @@ from . import gplog
 from . import scratchUtils
 from . import placement
 from . import plateLayout
+from . import plateSplit
 from .baseplateGeneratorInput import BaseplateGeneratorInput
 from .baseplateGenerator import createGridfinityBaseplate
 
@@ -83,17 +84,35 @@ class _BaseplateComputeHandler(adsk.fusion.CustomFeatureEventHandler):
                 gplog.log('COMPUTE: no BaseFeature found!')
                 return
             with gplog.timed('COMPUTE body swap'):
+                # One body per tile; the tile count may change with an edit.
+                new = pending['bodies']
                 baseFeat.startEdit()
-                oldBody = baseFeat.bodies.item(0)
-                baseFeat.updateBody(oldBody, pending['body'])
+                old = [baseFeat.bodies.item(i) for i in range(baseFeat.bodies.count)]
+                for i, body in enumerate(new):
+                    if i < len(old):
+                        baseFeat.updateBody(old[i], body)
+                    else:
+                        cf.parentComponent.bRepBodies.add(body, baseFeat)
+                for body in old[len(new):]:
+                    body.deleteMe()
                 baseFeat.finishEdit()
-            try:
-                baseFeat.bodies.item(0).name = pending['name']
-            except Exception:
-                pass
+            _nameBodies(baseFeat, pending['name'])
             gplog.log(f'COMPUTE: swap done, baseFeat bodies={baseFeat.bodies.count}')
         except Exception:
             gplog.logExc('COMPUTE handler')
+
+
+def bodyName(name: str, index: int, count: int) -> str:
+    return name if count <= 1 else '{} - tile {}/{}'.format(name, index + 1, count)
+
+
+def _nameBodies(baseFeat, name: str):
+    count = baseFeat.bodies.count
+    for i in range(count):
+        try:
+            baseFeat.bodies.item(i).name = bodyName(name, i, count)
+        except Exception:
+            pass
 
 
 def register(editCommandId: str, iconFolder: str):
@@ -103,6 +122,7 @@ def register(editCommandId: str, iconFolder: str):
         return _definition
     _definition = adsk.fusion.CustomFeatureDefinition.create(FEATURE_ID, FEATURE_NAME, iconFolder)
     _definition.editCommandId = editCommandId
+    gplog.log(f'register: {FEATURE_ID} edit={_definition.editCommandId}')
     _computeHandler = _BaseplateComputeHandler()
     _definition.customFeatureCompute.add(_computeHandler)
     return _definition
@@ -139,11 +159,16 @@ def buildInput(params: dict) -> BaseplateGeneratorInput:
 
 
 def featureName(params: dict) -> str:
-    return 'Baseplate {}'.format(plateLayout.describe(params))
+    name = 'Baseplate {}'.format(plateLayout.describe(params))
+    if plateSplit.enabled(params):
+        nx, ny = plateSplit.plan(params)['tiles']
+        if nx * ny > 1:
+            name += ' ({} tiles)'.format(nx * ny)
+    return name
 
 
 def getBaseplateBRep(des: adsk.fusion.Design, params: dict):
-    """Return a temporary BRep for params, using the cache when possible.
+    """Temporary BReps for params (one per tile), using the cache when possible.
 
     Must be called OUTSIDE the custom feature compute context (it creates and
     deletes parametric features in a scratch component).
@@ -153,7 +178,7 @@ def getBaseplateBRep(des: adsk.fusion.Design, params: dict):
     cached = _brepCache.get(key)
     if cached is not None:
         try:
-            if cached.faces.count > 0:
+            if all(b.faces.count > 0 for b in cached):
                 gplog.log('getBaseplateBRep: cache HIT')
                 return cached
         except Exception:
@@ -169,6 +194,7 @@ def getBaseplateBRep(des: adsk.fusion.Design, params: dict):
         body = createGridfinityBaseplate(genInput, scratchComp)
     tempBody = adsk.fusion.TemporaryBRepManager.get().copy(body)
     tempBody = plateLayout.cutToSize(tempBody, params)
+    tiles = plateSplit.pieces(tempBody, params)
 
     # Delete the scratch occurrence + all features it created (net timeline: zero).
     with gplog.timed('scratch cleanup'):
@@ -180,14 +206,15 @@ def getBaseplateBRep(des: adsk.fusion.Design, params: dict):
 
     if len(_brepCache) >= _BREP_CACHE_MAX:
         _brepCache.clear()
-    _brepCache[key] = tempBody
-    gplog.log(f'getBaseplateBRep: built, faces={tempBody.faces.count}, cached')
-    return tempBody
+    _brepCache[key] = tiles
+    gplog.log(f'getBaseplateBRep: built, tiles={len(tiles)}, cached')
+    return tiles
 
 
 def placedBRep(des: adsk.fusion.Design, params: dict):
-    """Plate BRep moved to its plane/anchor placement (component space)."""
-    return placement.placedCopy(getBaseplateBRep(des, params), params)
+    """Plate BReps (one per tile) moved to the plane/anchor placement
+    (component space)."""
+    return [placement.placedCopy(b, params) for b in getBaseplateBRep(des, params)]
 
 
 def _tag(customFeature, params: dict):
@@ -215,15 +242,19 @@ def createFeature(des: adsk.fusion.Design, component: adsk.fusion.Component, par
     name = featureName(params)
     gplog.session(f'createFeature "{name}" in component "{component.name}"')
 
-    tempBody = placedBRep(des, params)
-    if tempBody is None or tempBody.faces.count == 0:
+    tiles = placedBRep(des, params)
+    if not tiles or any(b.faces.count == 0 for b in tiles):
         raise RuntimeError('Generated baseplate body is empty')
+    return _createFromTiles(des, component, params, tiles, name)
+
+
+def _createFromTiles(des, component, params, tiles, name):
 
     with gplog.timed('create: baseFeature add+body'):
         baseFeat = component.features.baseFeatures.add()
         baseFeat.startEdit()
-        addedBody = component.bRepBodies.add(tempBody, baseFeat)
-        addedBody.name = name
+        for i, body in enumerate(tiles):
+            component.bRepBodies.add(body, baseFeat).name = bodyName(name, i, len(tiles))
         baseFeat.finishEdit()
 
     with gplog.timed('create: customFeature wrap'):
@@ -253,11 +284,11 @@ def rebuildFeature(des: adsk.fusion.Design, customFeature: adsk.fusion.CustomFea
     name = featureName(params)
     gplog.session(f'rebuildFeature "{name}"')
 
-    tempBody = placedBRep(des, params)
-    if tempBody is None or tempBody.faces.count == 0:
+    tiles = placedBRep(des, params)
+    if not tiles or any(b.faces.count == 0 for b in tiles):
         raise RuntimeError('Rebuilt baseplate body is empty')
 
-    _pending[customFeature.entityToken] = {'body': tempBody, 'name': name}
+    _pending[customFeature.entityToken] = {'bodies': tiles, 'name': name}
 
     customFeature.attributes.add(ATTR_GROUP, ATTR_PARAMS, json.dumps(params))
     customFeature.name = name
@@ -271,8 +302,63 @@ def rebuildFeature(des: adsk.fusion.Design, customFeature: adsk.fusion.CustomFea
     with gplog.timed('rebuild: rev bump -> compute'):
         revParam.value = revParam.value + 1
 
+    # The tile count may have changed. Check the result outside compute; if
+    # Fusion did not take the added / removed bodies, rebuild the feature at
+    # the same timeline position instead.
+    base = _findBaseFeature(customFeature)
+    count = base.bodies.count if base else -1
+    gplog.log(f'rebuild: bodies after compute={count}, expected={len(tiles)}')
+    if count != len(tiles):
+        _recreate(des, customFeature, params, name)
+
     gplog.dumpTimeline(des, 'rebuild:after')
     gplog.dumpBodies(component, 'rebuild:after')
+
+
+def _dependents(des, customFeature):
+    """[(customFeature, attrName, params)] of bins / cabinets standing on
+    this plate (they store its entityToken as plateToken)."""
+    out = []
+    for attrName in ('binParams', 'cabinetParams'):
+        for attr in des.findAttributes(ATTR_GROUP, attrName):
+            cf = adsk.fusion.CustomFeature.cast(attr.parent)
+            if not cf:
+                continue
+            try:
+                params = json.loads(attr.value)
+                token = params.get('plateToken')
+                if token and any(e == customFeature for e in des.findEntityByToken(token)):
+                    out.append((cf, attrName, params))
+            except Exception:
+                gplog.logExc('baseplate dependents')
+    return out
+
+
+def _recreate(des, customFeature, params, name):
+    """Replace the feature by a new one at the same timeline position (used
+    when the number of tile bodies changed), keeping bins / cabinets linked."""
+    gplog.log(f'rebuild: recreating "{name}" (tile count changed)')
+    component = customFeature.parentComponent
+    dependents = _dependents(des, customFeature)
+    timeline = des.timeline
+    index = customFeature.timelineObject.index
+    timeline.markerPosition = index + 1
+    try:
+        tiles = placedBRep(des, params)
+        newFeature = _createFromTiles(des, component, params, tiles, name)
+    finally:
+        timeline.moveToEnd()
+    base = _findBaseFeature(customFeature)
+    customFeature.deleteMe()
+    try:
+        if base is not None and base.isValid:
+            base.deleteMe()
+    except Exception:
+        pass
+    for cf, attrName, depParams in dependents:
+        depParams['plateToken'] = newFeature.entityToken
+        cf.attributes.add(ATTR_GROUP, attrName, json.dumps(depParams))
+    return newFeature
 
 
 def readParams(customFeature: adsk.fusion.CustomFeature):

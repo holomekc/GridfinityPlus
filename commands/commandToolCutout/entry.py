@@ -21,7 +21,7 @@ app = adsk.core.Application.get()
 ui = app.userInterface
 
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_cmdToolCutout'
-CMD_NAME = 'Gridfinity Tool Cutout'
+CMD_NAME = 'Gridfinity+ Tool Cutout'
 CMD_Description = 'Cut a top-insertable tool cavity into a Gridfinity bin'
 IS_PROMOTED = True
 

@@ -26,7 +26,7 @@ app = adsk.core.Application.get()
 ui = app.userInterface
 
 CMD_ID = f'{config.COMPANY_NAME}_{config.ADDIN_NAME}_cmdBaseplateEdit'
-CMD_NAME = 'Edit Gridfinity Baseplate'
+CMD_NAME = 'Edit Gridfinity+ Baseplate'
 CMD_Description = 'Edit an existing Gridfinity baseplate custom feature'
 ICON_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources', '')
 
@@ -49,7 +49,7 @@ def getErrorMessage(text='An unknown error occurred'):
 
 def start():
     # Hidden command: no toolbar button. Fusion launches it when a baseplate
-    # custom feature is double-clicked (definition.editCommandId points here).
+    # custom feature is double-clicked in the timeline (editCommandId).
     cmd_def = ui.commandDefinitions.itemById(CMD_ID)
     if not cmd_def:
         cmd_def = ui.commandDefinitions.addButtonDefinition(CMD_ID, CMD_NAME, CMD_Description, ICON_FOLDER)
@@ -62,16 +62,38 @@ def stop():
         cmd_def.deleteMe()
 
 
+def _featureOfBody(body: adsk.fusion.BRepBody):
+    """Baseplate custom feature whose BaseFeature owns `body`, or None."""
+    native = body.nativeObject if body.nativeObject else body
+    comp = native.parentComponent
+    for i in range(comp.features.customFeatures.count):
+        cf = comp.features.customFeatures.item(i)
+        if cf.definition.id != baseplateFeature.FEATURE_ID:
+            continue
+        base = baseplateFeature._findBaseFeature(cf)
+        if base is None:
+            continue
+        for b in base.bodies:
+            if b.entityToken == native.entityToken or b == native:
+                return cf
+    return None
+
+
 def _resolveSelectedFeature():
-    """Return the selected baseplate custom feature, or None."""
+    """The selected baseplate: its timeline node / custom feature or its body."""
     try:
         for i in range(ui.activeSelections.count):
             entity = ui.activeSelections.item(i).entity
             cf = adsk.fusion.CustomFeature.cast(entity)
             if cf and cf.definition.id == baseplateFeature.FEATURE_ID:
                 return cf
+            body = adsk.fusion.BRepBody.cast(entity)
+            if body:
+                cf = _featureOfBody(body)
+                if cf is not None:
+                    return cf
     except Exception:
-        pass
+        gplog.logExc('edit: resolve selection')
     return None
 
 
@@ -112,7 +134,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     _editedFeature = _resolveSelectedFeature()
     if _editedFeature is None:
         ui.messageBox('Could not resolve the baseplate feature to edit. '
-                      'Double-click the feature node in the timeline or browser.')
+                      'Double-click the feature node in the timeline.', CMD_NAME)
         return
 
     _editedParams = baseplateFeature.readParams(_editedFeature)
@@ -143,7 +165,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
 
 def command_input_changed(args: adsk.core.InputChangedEventArgs):
-    if args.input.id in (plateDialog.SIZE_INFO_SIZE, plateDialog.SIZE_INFO_CELLS):
+    if args.input.id in (plateDialog.SIZE_INFO_SIZE, plateDialog.SIZE_INFO_CELLS, plateDialog.SPLIT_INFO):
         return  # read-only readouts we set ourselves
     try:
         plateDialog.refresh(args.firingEvent.sender.commandInputs)

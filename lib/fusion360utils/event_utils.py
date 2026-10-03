@@ -84,5 +84,13 @@ def _define_handler(handler_type, callback, name: str = None):
                 callback(args)
             except:
                 handle_error(name)
+                # Also into gridfinityplus.log: Fusion's text window is easy
+                # to miss, and a failing commandCreated leaves a dead dialog.
+                try:
+                    from ..gridfinityUtils import gplog
+                    gplog.logExc(f'event handler "{name}" ({getattr(callback, "__module__", "?")}.'
+                                 f'{getattr(callback, "__name__", "?")})')
+                except Exception:
+                    pass
 
     return Handler
