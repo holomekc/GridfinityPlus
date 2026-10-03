@@ -20,6 +20,7 @@ from .commandEditBaseplate import entry as editBaseplate
 from .commandCreateBin import entry as createBin
 from .commandCreateCabinet import entry as createCabinet
 from .commandCreateDrawer import entry as createDrawer
+from .commandCreateCover import entry as createCover
 
 app = adsk.core.Application.get()
 ui = app.userInterface
@@ -31,6 +32,7 @@ _OWN = (
     (binFeature.FEATURE_ID, _PREFIX + 'Bin', 'Edit Gridfinity+ Bin', createBin),
     (box.CABINET.featureId, _PREFIX + 'Cabinet', 'Edit Gridfinity+ Cabinet', createCabinet),
     (box.INSERT.featureId, _PREFIX + 'Drawer', 'Edit Gridfinity+ Drawer', createDrawer),
+    (box.COVER.featureId, _PREFIX + 'Cover', 'Edit Gridfinity+ Cover', createCover),
 )
 
 _menuHandler = None

@@ -21,6 +21,7 @@ Parametric pieces (Gridfinity foot, baseplate cell cutout) are replaced by simpl
 | Script | Checks | Runtime |
 |---|---|---|
 | `t_import.py` | all command modules import | 1 s |
+| `t_cover.py` | grid cover: slab, feet, fill to edge (border / partial cell) | 1 s |
 | `t_split.py` | baseplate split plan, one body per tile, dovetail gap equal along the flank | 2 s |
 | `test_geom.py` | cabinet/insert probes (walls, ledges, grooves, detent, handles, knobs, labels, wire holes, overhang, top grid) + collision scan cabinet vs. insert, closed and pulled out | ~2-3 min |
 | `t_bin2.py` | builds the bin dialog 3x in a row; each run must reach the handler attach line (~874, `add_handler` KeyError is the mock's limit, not a bug) | 2 s |

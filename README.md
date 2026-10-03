@@ -82,6 +82,10 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 All overhangs are 45° (ledges, grooves, runners, handle undersides, teardrop knob). Print cabinets upright or on their
 back, inserts bottom down.
 
+**Gridfinity+ Cover** — a flat plate on Gridfinity feet that closes empty baseplate cells, e.g. in front of a
+cabinet. Size in cells, thickness above the plate, optional magnet / screw holes. Placed like a bin (click a cell,
+Ctrl+Click rotates) and fills to the plate edge over a border or partial cell.
+
 ### Other
 
 - **Clearer UI**: dialogs regrouped and renamed (Size, Placement, Grid unit, Style, Advanced; Width/Depth instead of

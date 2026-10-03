@@ -25,6 +25,7 @@ from . import gridRegistry
 from . import binFeature
 from . import cabinetLayout
 from . import cabinetGeometry
+from . import coverGeometry
 
 ATTR_GROUP = 'GridfinityPlus'
 
@@ -161,6 +162,7 @@ class FeatureKind:
 
 CABINET = FeatureKind('GridfinityPlus_cabinet', 'Gridfinity Cabinet', 'cabinetParams')
 INSERT = FeatureKind('GridfinityPlus_cabinetInsert', 'Gridfinity Drawer', 'insertParams')
+COVER = FeatureKind('GridfinityPlus_cover', 'Gridfinity Cover', 'coverParams')
 
 
 # ------------------------------------------------------------------ cabinet
@@ -270,6 +272,13 @@ def rebuildCabinet(des: adsk.fusion.Design, cf, params: dict, _visited=None):
                 rebuildCabinet(des, other, op, visited)
             except Exception:
                 gplog.logExc('rebuild stacked cabinet')
+    for cover in COVER.all(des):
+        cp = COVER.readParams(cover)
+        if cp and refersTo(des, cp.get('plateToken'), cf):
+            try:
+                rebuildCover(des, cover, cp)
+            except Exception:
+                gplog.logExc('rebuild cover on cabinet')
 
 
 def refersTo(des: adsk.fusion.Design, token, entity) -> bool:
@@ -338,3 +347,22 @@ def rebuildInsert(des: adsk.fusion.Design, cf, insertParams: dict):
     body = _placed(cabinetGeometry.buildInsert(des, cabParams, insertParams),
                    insertMatrix(des, cabParams, world=False))
     INSERT.rebuild(cf, body, insertParams, insertName(cabParams, insertParams))
+
+
+# -------------------------------------------------------------------- cover
+
+def _placedCover(des, params):
+    params = withOverhang(des, coverGeometry.withDefaults(params))
+    matrix, comp = cabinetMatrix(des, params, world=False)
+    return params, _placed(coverGeometry.buildCover(des, params), matrix), comp
+
+
+def createCover(des: adsk.fusion.Design, params: dict):
+    params, body, comp = _placedCover(des, params)
+    component = comp if comp is not None else des.rootComponent
+    return COVER.create(component, body, params, coverGeometry.describe(params))
+
+
+def rebuildCover(des: adsk.fusion.Design, cf, params: dict):
+    params, body, _ = _placedCover(des, params)
+    COVER.rebuild(cf, body, params, coverGeometry.describe(params))

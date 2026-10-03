@@ -123,6 +123,30 @@ def _detentCylinder(strip, y, radius):
     return _cylinderAxis((xa, y, z), (xb, y, z), radius)
 
 
+def gridFeet(des, p: dict, partial: dict, outline, radius: float):
+    """Gridfinity feet for a unitsW x unitsL footprint (bin convention: foot
+    cell i at x = i * baseW). A partial plate cell on a side adds one more
+    row/column of feet, cut to `outline` = (x0, x1, y0, y1)."""
+    foot = _getFoot(des, p['baseW'], p['baseL'], p['cl'],
+                    p['screws'], const.DIMENSION_SCREW_HOLE_DIAMETER,
+                    p['magnets'], False,
+                    const.DIMENSION_MAGNET_CUTOUT_DIAMETER, const.DIMENSION_MAGNET_CUTOUT_DEPTH)
+    eL, eR = int(partial.get('left', False)), int(partial.get('right', False))
+    eF, eB = int(partial.get('front', False)), int(partial.get('back', False))
+    feet = []
+    for i in range(-eL, int(p['unitsW']) + eR):
+        for j in range(-eF, int(p['unitsL']) + eB):
+            f = _tmgr().copy(foot)
+            _translate(f, i * p['baseW'], j * p['baseL'])
+            feet.append(f)
+    feet = _unionAll(feet)
+    if eL or eR or eF or eB:
+        x0, x1, y0, y1 = outline
+        window = _roundedSlab(x0, x1, y0, y1, -10.0, 10.0, radius)
+        _tmgr().booleanOperation(feet, window, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+    return feet
+
+
 # ------------------------------------------------------------------- cabinet
 
 def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
@@ -192,26 +216,7 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
             _subtract(body, _unionAll(holes))
 
         if p['feet']:
-            foot = _getFoot(des, p['baseW'], p['baseL'], p['cl'],
-                            p['screws'], const.DIMENSION_SCREW_HOLE_DIAMETER,
-                            p['magnets'], False,
-                            const.DIMENSION_MAGNET_CUTOUT_DIAMETER, const.DIMENSION_MAGNET_CUTOUT_DEPTH)
-            # Partial plate cell on a side: one more row/column of feet, cut
-            # to the outline below (like a bin's partial feet).
-            part = cab['partial']
-            eL, eR = int(part.get('left', False)), int(part.get('right', False))
-            eF, eB = int(part.get('front', False)), int(part.get('back', False))
-            feet = []
-            for i in range(-eL, int(p['unitsW']) + eR):
-                for j in range(-eF, int(p['unitsL']) + eB):
-                    f = _tmgr().copy(foot)
-                    _translate(f, i * p['baseW'], j * p['baseL'])
-                    feet.append(f)
-            feet = _unionAll(feet)
-            if eL or eR or eF or eB:
-                window = _roundedSlab(ox0, ox1, front, back, -10.0, 10.0, cab['radius'])
-                _tmgr().booleanOperation(feet, window, adsk.fusion.BooleanTypes.IntersectionBooleanType)
-            _union(body, feet)
+            _union(body, gridFeet(des, p, cab['partial'], (ox0, ox1, front, back), cab['radius']))
 
         gplog.log(f'cabinet build: faces={body.faces.count} errors={cab["errors"]}')
         return body

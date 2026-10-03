@@ -9,6 +9,7 @@ from .commandCreateBaseplate import entry as commandCreateBaseplate
 from .commandToolCutout import entry as commandToolCutout
 from .commandCreateCabinet import entry as commandCreateCabinet
 from .commandCreateDrawer import entry as commandCreateDrawer
+from .commandCreateCover import entry as commandCreateCover
 from . import contextEdit
 
 # TODO add imported modules to this list.
@@ -23,6 +24,7 @@ commands = [
     commandToolCutout,
     commandCreateCabinet,
     commandCreateDrawer,
+    commandCreateCover,
     # Right-click "Edit …" (Part designs have no timeline edit for add-in features).
     contextEdit,
 ]

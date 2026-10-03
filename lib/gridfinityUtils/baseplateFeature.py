@@ -319,7 +319,7 @@ def _dependents(des, customFeature):
     """[(customFeature, attrName, params)] of bins / cabinets standing on
     this plate (they store its entityToken as plateToken)."""
     out = []
-    for attrName in ('binParams', 'cabinetParams'):
+    for attrName in ('binParams', 'cabinetParams', 'coverParams'):
         for attr in des.findAttributes(ATTR_GROUP, attrName):
             cf = adsk.fusion.CustomFeature.cast(attr.parent)
             if not cf:
