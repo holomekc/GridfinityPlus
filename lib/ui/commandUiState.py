@@ -94,6 +94,8 @@ class CommandUiState:
         elif isinstance(input, adsk.core.DropDownCommandInput):
             for i in range(0, input.listItems.count):
                 input.listItems.item(i).isSelected = input.listItems.item(i).name == value
+            if input.selectedItem is None and input.listItems.count > 0:
+                input.listItems.item(0).isSelected = True
         elif isinstance(input, adsk.core.GroupCommandInput):
             input.isExpanded = value
         elif isinstance(input, adsk.core.BoolValueCommandInput):

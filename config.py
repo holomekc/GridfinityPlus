@@ -8,13 +8,13 @@ import os
 # more information is written to the Text Command window. Generally, it's useful
 # to set this to True while developing an add-in and set it to False when you
 # are ready to distribute it.
-DEBUG = True
+DEBUG = False
 
 # Gets the name of the add-in from the name of the folder the py file is in.
 # This is used when defining unique internal names for various UI elements 
 # that need a unique name. It's also recommended to use a company name as 
 # part of the ID to better ensure the ID is unique.
-ADDIN_NAME = 'GridfinityGenerator'
+ADDIN_NAME = 'GridfinityPlus'
 COMPANY_NAME = 'LevMishin'
 
 # Palettes

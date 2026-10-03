@@ -33,94 +33,9 @@ def createGridfinityBaseplate(input: BaseplateGeneratorInput, targetComponent: a
     connectionHoleXTool = None
 
     if input.hasSkeletonizedBottom:
-        centerCutoutSketch,centerCutoutSketchCircle = baseGenerator.createCircleAtPointSketch(
-            faceUtils.getBottomFace(baseBody),
-            input.magnetCutoutsDiameter / 2,
-            holeCenterPoint,
-            targetComponent
-        )
-        centerCutoutSketch.name = "center bottom cutout"
-        sketchUtils.convertToConstruction(centerCutoutSketch.sketchCurves)
-        sketchCurves = centerCutoutSketch.sketchCurves
-        dimensions = centerCutoutSketch.sketchDimensions
-        constraints = centerCutoutSketch.geometricConstraints
-        sketchLines = sketchCurves.sketchLines
-        screwHoleCircle = sketchCurves.sketchCircles.item(0)
-        arcStartingPoint = screwHoleCircle.centerSketchPoint.geometry.asVector()
-        arcStartingPoint.add(adsk.core.Vector3D.create(0, max(input.magnetCutoutsDiameter, input.screwHeadCutoutDiameter) / 2 + 0.1, 0))
-        arc = sketchCurves.sketchArcs.addByCenterStartSweep(
-            screwHoleCircle.centerSketchPoint,
-            arcStartingPoint.asPoint(),
-            math.radians(90),
-        )
-
-        verticalEdgeLine = min([line for line in sketchLines if sketchUtils.isVertical(line)], key=lambda x: abs(x.startSketchPoint.geometry.x))
-        horizontalEdgeLine = min([line for line in sketchLines if sketchUtils.isHorizontal(line)], key=lambda x: abs(x.startSketchPoint.geometry.y))
-
-        baseCenterOffsetX = input.baseWidth / 2 - input.xyClearance
-        baseCenterOffsetY = input.baseLength / 2 - input.xyClearance
-        line1 = sketchLines.addByTwoPoints(arc.startSketchPoint, adsk.core.Point3D.create(verticalEdgeLine.startSketchPoint.geometry.x, arc.startSketchPoint.geometry.y, 0))
-        line2 = sketchLines.addByTwoPoints(line1.endSketchPoint, adsk.core.Point3D.create(line1.endSketchPoint.geometry.x, baseCenterOffsetY, 0))
-        line3 = sketchLines.addByTwoPoints(line2.endSketchPoint, adsk.core.Point3D.create(-baseCenterOffsetX, baseCenterOffsetY, 0))
-        line4 = sketchLines.addByTwoPoints(line3.endSketchPoint, adsk.core.Point3D.create(line3.endSketchPoint.geometry.x, horizontalEdgeLine.startSketchPoint.geometry.y, 0))
-        line5 = sketchLines.addByTwoPoints(line4.endSketchPoint, adsk.core.Point3D.create(arc.endSketchPoint.geometry.x, line4.endSketchPoint.geometry.y, 0))
-        line6 = sketchLines.addByTwoPoints(line5.endSketchPoint, arc.endSketchPoint)
-        
-        constraints.addCoincident(line1.endSketchPoint, verticalEdgeLine)
-        constraints.addCoincident(line6.startSketchPoint, horizontalEdgeLine)
-        constraints.addCoincident(screwHoleCircle.centerSketchPoint, arc.centerSketchPoint)
-        constraints.addHorizontal(line1)
-        constraints.addPerpendicular(line1, line2)
-        constraints.addPerpendicular(line2, line3)
-        constraints.addPerpendicular(line3, line4)
-        constraints.addPerpendicular(line4, line5)
-        constraints.addPerpendicular(line5, line6)
-        constraints.addTangent(arc, line1)
-        constraints.addEqual(line1, line6)
-        constraints.addEqual(line2, line5)
-        dimensions.addRadialDimension(arc, arc.endSketchPoint.geometry, True)
-        dimensions.addDistanceDimension(
-            arc.endSketchPoint,
-            line3.endSketchPoint,
-            adsk.fusion.DimensionOrientations.HorizontalDimensionOrientation,
-            line2.endSketchPoint.geometry
-            )
-
-        centerCutoutExtrudeFeature = extrudeUtils.simpleDistanceExtrude(
-            centerCutoutSketch.profiles.item(0),
-            adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
-            input.bottomExtensionHeight,
-            adsk.fusion.ExtentDirections.PositiveExtentDirection,
-            [],
-            targetComponent,
-        )
-
-        constructionAxisInput: adsk.fusion.ConstructionAxisInput = targetComponent.constructionAxes.createInput()
-        constructionAxisInput.setByNormalToFaceAtPoint(
-            faceUtils.getBottomFace(baseBody),
-            line3.endSketchPoint,
-        )
-        constructionAxis = targetComponent.constructionAxes.add(constructionAxisInput)
-        constructionAxis.isLightBulbOn = False
-
-        centerCutoutPattern = patternUtils.circPattern(
-            commonUtils.objectCollectionFromList(centerCutoutExtrudeFeature.bodies),
-            constructionAxis,
-            4,
-            targetComponent,
-        )
-        centerCutoutBody = centerCutoutExtrudeFeature.bodies.item(0)
-        combineUtils.joinBodies(
-            centerCutoutBody,
-            commonUtils.objectCollectionFromList([body for body in list(centerCutoutPattern.bodies) if not body.name == centerCutoutBody.name]),
-            targetComponent,
-        )
+        centerCutoutBody, connectionHoleYTool, connectionHoleXTool = createSkeletonCenterCutout(
+            input, baseBody, targetComponent)
         extraCutoutBodies.append(centerCutoutBody)
-        if input.hasConnectionHoles:
-            connectionHoleFaceY = min([face for face in centerCutoutBody.faces if faceUtils.isYNormal(face)], key=lambda x: x.boundingBox.minPoint.y)
-            connectionHoleYTool = createConnectionHoleTool(connectionHoleFaceY, input.connectionScrewHolesDiameter / 2, input.baseWidth / 2, targetComponent)
-            connectionHoleFaceX = min([face for face in centerCutoutBody.faces if faceUtils.isXNormal(face)], key=lambda x: x.boundingBox.minPoint.x)
-            connectionHoleXTool = createConnectionHoleTool(connectionHoleFaceX, input.connectionScrewHolesDiameter / 2, input.baseWidth / 2, targetComponent)
 
     holeCuttingBodies: list[adsk.fusion.BRepBody] = []
     
@@ -408,3 +323,110 @@ def createConnectionHoleTool(connectionHoleFace: adsk.fusion.BRepFace, diameter:
         targetComponent,
     )
     return connectionHoleTool
+
+def createSkeletonCenterCutout(
+    input: BaseplateGeneratorInput,
+    baseBody: adsk.fusion.BRepBody,
+    targetComponent: adsk.fusion.Component,
+):
+    """Build the per-cell skeleton center cutout body (4 pockets around the cell
+    center). Extracted from createGridfinityBaseplate so the fast dialog preview
+    can build/cache it for a single cell. Returns
+    (centerCutoutBody, connectionHoleYTool, connectionHoleXTool)."""
+    holeCenterPoint = adsk.core.Point3D.create(
+        const.DIMENSION_SCREW_HOLES_OFFSET - input.xyClearance,
+        const.DIMENSION_SCREW_HOLES_OFFSET - input.xyClearance,
+        0
+    )
+    connectionHoleYTool = None
+    connectionHoleXTool = None
+
+    centerCutoutSketch,centerCutoutSketchCircle = baseGenerator.createCircleAtPointSketch(
+        faceUtils.getBottomFace(baseBody),
+        input.magnetCutoutsDiameter / 2,
+        holeCenterPoint,
+        targetComponent
+    )
+    centerCutoutSketch.name = "center bottom cutout"
+    sketchUtils.convertToConstruction(centerCutoutSketch.sketchCurves)
+    sketchCurves = centerCutoutSketch.sketchCurves
+    dimensions = centerCutoutSketch.sketchDimensions
+    constraints = centerCutoutSketch.geometricConstraints
+    sketchLines = sketchCurves.sketchLines
+    screwHoleCircle = sketchCurves.sketchCircles.item(0)
+    arcStartingPoint = screwHoleCircle.centerSketchPoint.geometry.asVector()
+    arcStartingPoint.add(adsk.core.Vector3D.create(0, max(input.magnetCutoutsDiameter, input.screwHeadCutoutDiameter) / 2 + 0.1, 0))
+    arc = sketchCurves.sketchArcs.addByCenterStartSweep(
+        screwHoleCircle.centerSketchPoint,
+        arcStartingPoint.asPoint(),
+        math.radians(90),
+    )
+
+    verticalEdgeLine = min([line for line in sketchLines if sketchUtils.isVertical(line)], key=lambda x: abs(x.startSketchPoint.geometry.x))
+    horizontalEdgeLine = min([line for line in sketchLines if sketchUtils.isHorizontal(line)], key=lambda x: abs(x.startSketchPoint.geometry.y))
+
+    baseCenterOffsetX = input.baseWidth / 2 - input.xyClearance
+    baseCenterOffsetY = input.baseLength / 2 - input.xyClearance
+    line1 = sketchLines.addByTwoPoints(arc.startSketchPoint, adsk.core.Point3D.create(verticalEdgeLine.startSketchPoint.geometry.x, arc.startSketchPoint.geometry.y, 0))
+    line2 = sketchLines.addByTwoPoints(line1.endSketchPoint, adsk.core.Point3D.create(line1.endSketchPoint.geometry.x, baseCenterOffsetY, 0))
+    line3 = sketchLines.addByTwoPoints(line2.endSketchPoint, adsk.core.Point3D.create(-baseCenterOffsetX, baseCenterOffsetY, 0))
+    line4 = sketchLines.addByTwoPoints(line3.endSketchPoint, adsk.core.Point3D.create(line3.endSketchPoint.geometry.x, horizontalEdgeLine.startSketchPoint.geometry.y, 0))
+    line5 = sketchLines.addByTwoPoints(line4.endSketchPoint, adsk.core.Point3D.create(arc.endSketchPoint.geometry.x, line4.endSketchPoint.geometry.y, 0))
+    line6 = sketchLines.addByTwoPoints(line5.endSketchPoint, arc.endSketchPoint)
+
+    constraints.addCoincident(line1.endSketchPoint, verticalEdgeLine)
+    constraints.addCoincident(line6.startSketchPoint, horizontalEdgeLine)
+    constraints.addCoincident(screwHoleCircle.centerSketchPoint, arc.centerSketchPoint)
+    constraints.addHorizontal(line1)
+    constraints.addPerpendicular(line1, line2)
+    constraints.addPerpendicular(line2, line3)
+    constraints.addPerpendicular(line3, line4)
+    constraints.addPerpendicular(line4, line5)
+    constraints.addPerpendicular(line5, line6)
+    constraints.addTangent(arc, line1)
+    constraints.addEqual(line1, line6)
+    constraints.addEqual(line2, line5)
+    dimensions.addRadialDimension(arc, arc.endSketchPoint.geometry, True)
+    dimensions.addDistanceDimension(
+        arc.endSketchPoint,
+        line3.endSketchPoint,
+        adsk.fusion.DimensionOrientations.HorizontalDimensionOrientation,
+        line2.endSketchPoint.geometry
+        )
+
+    centerCutoutExtrudeFeature = extrudeUtils.simpleDistanceExtrude(
+        centerCutoutSketch.profiles.item(0),
+        adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+        input.bottomExtensionHeight,
+        adsk.fusion.ExtentDirections.PositiveExtentDirection,
+        [],
+        targetComponent,
+    )
+
+    constructionAxisInput: adsk.fusion.ConstructionAxisInput = targetComponent.constructionAxes.createInput()
+    constructionAxisInput.setByNormalToFaceAtPoint(
+        faceUtils.getBottomFace(baseBody),
+        line3.endSketchPoint,
+    )
+    constructionAxis = targetComponent.constructionAxes.add(constructionAxisInput)
+    constructionAxis.isLightBulbOn = False
+
+    centerCutoutPattern = patternUtils.circPattern(
+        commonUtils.objectCollectionFromList(centerCutoutExtrudeFeature.bodies),
+        constructionAxis,
+        4,
+        targetComponent,
+    )
+    centerCutoutBody = centerCutoutExtrudeFeature.bodies.item(0)
+    combineUtils.joinBodies(
+        centerCutoutBody,
+        commonUtils.objectCollectionFromList([body for body in list(centerCutoutPattern.bodies) if not body.name == centerCutoutBody.name]),
+        targetComponent,
+    )
+    if input.hasConnectionHoles:
+        connectionHoleFaceY = min([face for face in centerCutoutBody.faces if faceUtils.isYNormal(face)], key=lambda x: x.boundingBox.minPoint.y)
+        connectionHoleYTool = createConnectionHoleTool(connectionHoleFaceY, input.connectionScrewHolesDiameter / 2, input.baseWidth / 2, targetComponent)
+        connectionHoleFaceX = min([face for face in centerCutoutBody.faces if faceUtils.isXNormal(face)], key=lambda x: x.boundingBox.minPoint.x)
+        connectionHoleXTool = createConnectionHoleTool(connectionHoleFaceX, input.connectionScrewHolesDiameter / 2, input.baseWidth / 2, targetComponent)
+
+    return centerCutoutBody, connectionHoleYTool, connectionHoleXTool

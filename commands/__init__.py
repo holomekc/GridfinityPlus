@@ -4,13 +4,20 @@
 # If you want to add an additional command, duplicate one of the existing directories and import it here.
 # You need to use aliases (import "entry" as "my_module") assuming you have the default module named "entry".
 from .commandCreateBin import entry as commandCreateBin
+from .commandEditBaseplate import entry as commandEditBaseplate
 from .commandCreateBaseplate import entry as commandCreateBaseplate
+from .commandToolCutout import entry as commandToolCutout
 
 # TODO add imported modules to this list.
 # Fusion will automatically call the start() and stop() functions.
+# commandEditBaseplate is listed before commandCreateBaseplate so its command
+# definition exists when the custom feature definition references it.
+# The bin custom feature uses commandCreateBin itself as its edit command.
 commands = [
     commandCreateBin,
+    commandEditBaseplate,
     commandCreateBaseplate,
+    commandToolCutout,
 ]
 
 

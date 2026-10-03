@@ -3,7 +3,7 @@ import os
 
 from .sketchUtils import createRectangle
 from ...lib.gridfinityUtils.baseGeneratorInput import BaseGeneratorInput
-from . import sketchUtils, const, edgeUtils, commonUtils, combineUtils, faceUtils, extrudeUtils, shapeUtils, geometryUtils
+from . import sketchUtils, const, edgeUtils, commonUtils, combineUtils, faceUtils, extrudeUtils, shapeUtils, geometryUtils, scratchUtils
 from ...lib import fusion360utils as futil
 from ... import config
 
@@ -449,6 +449,6 @@ def cutBaseClearance(
         adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(100)),
         adsk.fusion.DistanceExtentDefinition.create(adsk.core.ValueInput.createByReal(100)),
     )
-    clearanceCutExtrudeInput.participantBodies = list(targetComponent.bRepBodies)
+    clearanceCutExtrudeInput.participantBodies = scratchUtils.ownBodies(targetComponent)
     clearanceCutExtrude = features.extrudeFeatures.add(clearanceCutExtrudeInput)
     clearanceCutExtrude.name = "Base side clearance cut"

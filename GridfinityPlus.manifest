@@ -1,0 +1,13 @@
+{
+	"autodeskProduct":	"Fusion360",
+	"type":	"addin",
+	"id":	"7abe424d-9d14-4eaa-8448-887f9776770d",
+	"author":	"LevMishin (fork: GridfinityPlus)",
+	"description":	{
+		"":	"GridfinityPlus - grid-aware fork of FusionGridfinityGenerator (CC-BY-NC-SA 4.0)"
+	},
+	"version":	"1.4.2.0",
+	"runOnStartup":	true,
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true
+}
