@@ -39,7 +39,8 @@ editable after the fact.
 - **Fill to edge.** Per bin side: *Auto* / *Yes* / *No*. With *Auto*, a bin sitting at the plate edge grows over the
   plate's border or partial cell. Over a partial cell it also gets a matching cut foot, so it seats in the cut pocket.
 - **Height in units or in mm** (`Height by`). Units are whole Gridfinity height units (7 mm by default); *Total
-  height* takes any height in mm.
+  height* takes any height in mm. The height unit itself can be changed too (e.g. 5 mm), as long as at least 1 mm of
+  bin body is left above the feet.
 - **Editable afterwards** as a custom feature, like plates.
 - **Better preview** for hollow (shows compartments / dividers) and shelled bins. Compartment settings only show up for
   hollow bins, where they actually apply.
@@ -54,7 +55,7 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 
 ### Box system: cabinets, drawers, boxes (new commands, *Create* panel)
 
-**Gridfinity Cabinet**: a tall, open-front housing.
+**Gridfinity+ Cabinet**: a tall, open-front housing.
 
 - Width / depth in grid units, height in height units or total mm.
 - Optional Gridfinity feet (magnet / screw holes): snaps onto a baseplate like a bin.
@@ -62,29 +63,44 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 - Columns (vertical dividers) and rows (equal, or weighted like `1,1,2`).
 - Guides: **ledges** (inserts rest on shelf strips) or **grooves** (V-grooves, inserts carry runners; an insert can
   span several rows).
-- Optional click detent, wall mount holes, adjustable walls and insert clearances.
+- Optional click detent (adjustable bump height), wall mount holes, adjustable walls (1.2 mm default) and insert
+  clearances.
 - Editing a cabinet rebuilds its inserts and the cabinets stacked on it.
 - Fills to edge over a plate's border / partial cells like bins. The top grid then repeats the partial cell (or stays
   flat), so bins on top can fill to the edge as well.
 
-**Gridfinity Drawer**: an insert, sized automatically from the cabinet slot.
+**Gridfinity+ Drawer**: an insert, sized automatically from the cabinet slot.
 
 - Type: drawer, or blank cover (front + short frame, closes a slot with little filament). Optional shorter depth.
 - Front: flush with the cabinet (default) or overlay.
-- Handle: recessed pull (hollow pocket behind the front), hook lip, bar handle, top notch, finger hole or knob, all
-  printable without supports.
+- Handles, all printable without supports:
+  - *Recessed pull*: hollow pocket behind the front, flush.
+  - *Pull handle*: hollow grip standing out, open at the bottom. Grip face, thicknesses and side walls are adjustable,
+    from a thin lip that just sticks out a little to a scoop or D-handle.
+  - *Grooved ledge*: closed wedge with a finger groove on top. Set groove width / depth, rim and height; the height
+    sets the slope underneath (higher = steeper = easier to print, 0 = 45°).
+  - *Top notch*, *finger hole*, *knob* (round, mushroom or spool with a U groove; on a stand, on thin breakaway fins
+    or without support).
+  - Position top / centre / bottom for protruding handles.
 - Label: sticker recess (flush) or card holder, placed below / above / beside the handle; *Auto* picks what fits.
-- Wire outlets: holes beside the handle to pull wire from a spool inside.
-- Interior: empty, compartments, or a Gridfinity grid for bins.
+- Wire outlets: holes beside the handle.
+- Interior: empty, compartments, a Gridfinity grid for bins, or **spools** for wire: spools side by side on an axle
+  across the drawer (axle is a separate body, printed lying flat, with collars), cradles with an open-top slot, an
+  eyelet per spool and a wire outlet in front of each spool.
 - Pull-out stop (with the cabinet's detent) and *Show pulled out* for viewing.
 - Pick the slot by clicking the cabinet front, or fill a whole column or the whole cabinet in one go.
 
 All overhangs are 45° (ledges, grooves, runners, handle undersides, teardrop knob). Print cabinets upright or on their
 back, inserts bottom down.
 
-**Gridfinity+ Cover** — a flat plate on Gridfinity feet that closes empty baseplate cells, e.g. in front of a
+**Gridfinity+ Cover**: a flat plate on Gridfinity feet that closes empty baseplate cells, e.g. in front of a
 cabinet. Size in cells, thickness above the plate, optional magnet / screw holes. Placed like a bin (click a cell,
-Ctrl+Click rotates) and fills to the plate edge over a border or partial cell.
+Ctrl+Click rotates) and fills to the plate edge over a border or partial cell. Default thickness 1 mm, so the bottom
+drawer of a cabinet still slides out over it.
+
+**Editing in Part designs**: Fusion offers no *Edit Feature* / timeline double-click for add-in features in designs
+with design intent *Part*. Right-click the bin, plate, cabinet, drawer or cover (body or browser entry) and use
+**Edit Gridfinity+ …** instead.
 
 ### Other
 
@@ -101,20 +117,22 @@ Ctrl+Click rotates) and fills to the plate edge over a border or partial cell.
    select the `GridfinityPlus` folder.
 3. Select **GridfinityPlus** in the list and click **Run**. Tick *Run on Startup* if you like.
 
-The commands appear in **Solid → Create** (*Gridfinity Baseplate*, *Gridfinity Bin*, *Gridfinity Cabinet*,
-*Gridfinity Drawer*) and **Solid → Modify** (*Gridfinity Tool Cutout*).
+The commands appear in **Solid → Create** (*Gridfinity+ Baseplate*, *Gridfinity+ Bin*, *Gridfinity+ Cabinet*,
+*Gridfinity+ Drawer*, *Gridfinity+ Cover*) and **Solid → Modify** (*Gridfinity+ Tool Cutout*).
 
 GridfinityPlus uses its own command IDs, so it can be installed side by side with the original Gridfinity
-Generator from the Autodesk App Store.
+Generator from the Autodesk App Store. Its buttons look almost the same ("Gridfinity bin" / "Gridfinity baseplate"),
+but what it creates can't be edited or snapped to a grid; use the *Gridfinity+* buttons, or disable the original.
 
 ## Typical workflow
 
 1. **Baseplate**: choose *Size by*, set the edges, pick a face to place it on and click OK.
 2. **Bin**: choose the plate under *Placement*, click a cell, set size, height and type, then click OK.
 3. **Cabinet** (optional): place it on the plate like a bin, set rows / columns and guides. Then run
-   **Gridfinity Drawer** and click a slot in the cabinet front.
-4. Need changes? Double-click the plate, bin or cabinet in the timeline.
-5. Optional: model a tool, then run **Gridfinity Tool Cutout** on a bin.
+   **Gridfinity+ Drawer** and click a slot in the cabinet front. **Gridfinity+ Cover** closes empty cells in front.
+4. Need changes? Double-click the plate, bin or cabinet in the timeline (Part designs: right-click → *Edit
+   Gridfinity+ …*).
+5. Optional: model a tool, then run **Gridfinity+ Tool Cutout** on a bin.
 
 ## Compatibility notes
 

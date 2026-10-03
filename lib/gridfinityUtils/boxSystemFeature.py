@@ -44,15 +44,40 @@ class _ComputeHandler(adsk.fusion.CustomFeatureEventHandler):
             if baseFeat is None:
                 gplog.log(f'BOX COMPUTE: "{cf.name}" has no BaseFeature')
                 return
+            # Several bodies (e.g. drawer + spool axle); the count may change.
+            new = pending['bodies']
             baseFeat.startEdit()
-            baseFeat.updateBody(baseFeat.bodies.item(0), pending['body'])
+            old = [baseFeat.bodies.item(i) for i in range(baseFeat.bodies.count)]
+            for i, body in enumerate(new):
+                if i < len(old):
+                    baseFeat.updateBody(old[i], body)
+                else:
+                    cf.parentComponent.bRepBodies.add(body, baseFeat)
+            for body in old[len(new):]:
+                body.deleteMe()
             baseFeat.finishEdit()
-            try:
-                baseFeat.bodies.item(0).name = pending['name']
-            except Exception:
-                pass
+            _nameBodies(baseFeat, pending['names'])
         except Exception:
             gplog.logExc('BOX COMPUTE handler')
+
+
+def _asList(bodies):
+    return list(bodies) if isinstance(bodies, (list, tuple)) else [bodies]
+
+
+def _names(name: str, count: int, partNames=None):
+    """Body names: the feature name for the main body, then the part names."""
+    extra = list(partNames or [])
+    return [name] + [f'{name} - {extra[i - 1] if i - 1 < len(extra) else "part " + str(i)}'
+                     for i in range(1, count)]
+
+
+def _nameBodies(baseFeat, names):
+    for i in range(min(baseFeat.bodies.count, len(names))):
+        try:
+            baseFeat.bodies.item(i).name = names[i]
+        except Exception:
+            pass
 
 
 def _findBaseFeature(cf: adsk.fusion.CustomFeature):
@@ -135,11 +160,15 @@ class FeatureKind:
         base = _findBaseFeature(cf)
         return list(base.bodies) if base else []
 
-    def create(self, component: adsk.fusion.Component, body, params: dict, name: str):
+    def create(self, component: adsk.fusion.Component, bodies, params: dict, name: str, partNames=None):
+        """bodies: one temp body or a list (main body first)."""
         gplog.session(f'{self.featureName} create "{name}"')
+        bodies = _asList(bodies)
+        names = _names(name, len(bodies), partNames)
         baseFeat = component.features.baseFeatures.add()
         baseFeat.startEdit()
-        component.bRepBodies.add(body, baseFeat).name = name
+        for body, bodyName in zip(bodies, names):
+            component.bRepBodies.add(body, baseFeat).name = bodyName
         baseFeat.finishEdit()
         cfInput = component.features.customFeatures.createInput(self._definition)
         cfInput.addCustomParameter('rev', 'Revision', adsk.core.ValueInput.createByReal(1), '', False)
@@ -149,15 +178,45 @@ class FeatureKind:
         cf.attributes.add(ATTR_GROUP, self.attrName, json.dumps(params))
         return cf
 
-    def rebuild(self, cf, body, params: dict, name: str):
+    def rebuild(self, cf, bodies, params: dict, name: str, partNames=None):
+        """Swap in new bodies via compute. Returns the feature (a new one if
+        the body count changed and Fusion did not take it in compute)."""
         gplog.session(f'{self.featureName} rebuild "{name}"')
-        _pending[cf.entityToken] = {'body': body, 'name': name}
+        bodies = _asList(bodies)
+        tmgr = adsk.fusion.TemporaryBRepManager.get()
+        # Compute may consume the bodies; keep the originals for a recreate.
+        _pending[cf.entityToken] = {'bodies': [tmgr.copy(b) for b in bodies],
+                                    'names': _names(name, len(bodies), partNames)}
         cf.attributes.add(ATTR_GROUP, self.attrName, json.dumps(params))
         cf.name = name
         revParam = cf.parameters.itemById('rev')
         if revParam is None:
             raise RuntimeError(f'"{cf.name}" has no revision parameter, please recreate it.')
         revParam.value = revParam.value + 1
+        base = _findBaseFeature(cf)
+        count = base.bodies.count if base else -1
+        if count == len(bodies):
+            return cf
+        gplog.log(f'{self.featureName} rebuild: bodies={count}, expected {len(bodies)} -> recreate')
+        return self._recreate(cf, bodies, params, name, partNames)
+
+    def _recreate(self, cf, bodies, params, name, partNames):
+        """New feature at the same timeline position, old one deleted."""
+        des = adsk.fusion.Design.cast(cf.parentComponent.parentDesign)
+        timeline = des.timeline
+        timeline.markerPosition = cf.timelineObject.index + 1
+        try:
+            newCf = self.create(cf.parentComponent, bodies, params, name, partNames)
+        finally:
+            timeline.moveToEnd()
+        base = _findBaseFeature(cf)
+        cf.deleteMe()
+        try:
+            if base is not None and base.isValid:
+                base.deleteMe()
+        except Exception:
+            pass
+        return newCf
 
 
 CABINET = FeatureKind('GridfinityPlus_cabinet', 'Gridfinity Cabinet', 'cabinetParams')
@@ -331,12 +390,17 @@ def insertName(cabParams: dict, insertParams: dict) -> str:
     return cabinetLayout.describeInsert(cabinetLayout.cabinet(cabParams), insertParams)
 
 
+def _insertBodies(des, cabParams, insertParams):
+    matrix = insertMatrix(des, cabParams, world=False)
+    parts = [_placed(b, matrix) for b in cabinetGeometry.buildInsertParts(des, cabParams, insertParams)]
+    return parts, ['axle'] * (len(parts) - 1)
+
+
 def createInsert(des: adsk.fusion.Design, cabCf, insertParams: dict):
     cabParams = CABINET.readParams(cabCf)
-    body = _placed(cabinetGeometry.buildInsert(des, cabParams, insertParams),
-                   insertMatrix(des, cabParams, world=False))
+    parts, partNames = _insertBodies(des, cabParams, insertParams)
     params = dict(insertParams, cabinetToken=cabCf.entityToken)
-    return INSERT.create(cabCf.parentComponent, body, params, insertName(cabParams, params))
+    return INSERT.create(cabCf.parentComponent, parts, params, insertName(cabParams, params), partNames)
 
 
 def rebuildInsert(des: adsk.fusion.Design, cf, insertParams: dict):
@@ -344,9 +408,8 @@ def rebuildInsert(des: adsk.fusion.Design, cf, insertParams: dict):
     if cabCf is None:
         raise RuntimeError('The cabinet of this insert no longer exists.')
     cabParams = CABINET.readParams(cabCf)
-    body = _placed(cabinetGeometry.buildInsert(des, cabParams, insertParams),
-                   insertMatrix(des, cabParams, world=False))
-    INSERT.rebuild(cf, body, insertParams, insertName(cabParams, insertParams))
+    parts, partNames = _insertBodies(des, cabParams, insertParams)
+    return INSERT.rebuild(cf, parts, insertParams, insertName(cabParams, insertParams), partNames)
 
 
 # -------------------------------------------------------------------- cover

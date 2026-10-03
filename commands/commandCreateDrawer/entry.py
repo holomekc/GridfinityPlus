@@ -208,6 +208,10 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'fingerGrooveWidth', 'Groove width', p, units, minimum=0.2, maximum=3.0,
                 tooltip='Width of the finger groove on top (front to back)')
     form.length(g, 'fingerGrooveDepth', 'Groove depth', p, units, minimum=0.05, maximum=2.0)
+    form.length(g, 'ledgeHeight', 'Height (0 = 45°)', p, units, minimum=0.0,
+                tooltip='Total height of the ledge. It sets the slope underneath: higher = steeper '
+                        '(easier to print), lower = flatter. 0 = 45°. Raised automatically if the '
+                        'groove needs more material below it.')
     form.length(g, 'ledgeRim', 'Rim', p, units, minimum=0.08, maximum=1.0,
                 tooltip='Material around the groove on top. The 45° underside follows from these.')
     form.length(g, 'pullSides', 'Side walls', p, units, minimum=0.0, maximum=1.0,
@@ -231,6 +235,13 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
                 'Gridfinity grid: Gridfinity bins fit into the insert')
     form.integer(g, 'divX', 'Divisions across', p, 1, 20)
     form.integer(g, 'divY', 'Divisions deep', p, 1, 20)
+    form.integer(g, 'spoolCount', 'Spools', p, 1, 10, 'Spools side by side on one axle')
+    form.length(g, 'spoolDiameter', 'Spool diameter', p, units, minimum=1.0)
+    form.length(g, 'spoolWidth', 'Spool width', p, units, minimum=0.3)
+    form.length(g, 'spoolBore', 'Spool bore', p, units, minimum=0.3,
+                tooltip='Diameter of the hole in the spool; the axle is made slightly thinner')
+    form.boolean(g, 'spoolGuides', 'Wire guides', p,
+                 'Eyelet between each spool and its outlet in the front')
 
     inputs.addTextBoxCommandInput(IN_INFO, 'Result', '', 5, True)
 
@@ -293,6 +304,11 @@ def _syncVisibility(inputs):
     drawer = p['insertType'] == L.INSERT_DRAWER
     form.setVisible(inputs, 'interior', drawer)
     compartments = drawer and p['interior'] == L.INTERIOR_COMPARTMENTS
+    spools = drawer and p['interior'] == L.INTERIOR_SPOOLS
+    for inputId in ('spoolCount', 'spoolDiameter', 'spoolWidth', 'spoolBore', 'spoolGuides'):
+        form.setVisible(inputs, inputId, spools)
+    # Spool drawers get one outlet per spool automatically.
+    form.setVisible(inputs, 'wireHoles', not spools)
     form.setVisible(inputs, 'divX', compartments)
     form.setVisible(inputs, 'divY', compartments)
     hasHandle = p['handle'] != L.HANDLE_NONE
@@ -303,7 +319,7 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'knobSupport', kind == L.HANDLE_KNOB)
     form.setVisible(inputs, 'handleDepth', hasHandle and kind not in (L.HANDLE_SLOT, L.HANDLE_NOTCH, L.HANDLE_LEDGE))
     form.setVisible(inputs, 'pullGrip', kind == L.HANDLE_PULL)
-    for inputId in ('fingerGrooveWidth', 'fingerGrooveDepth', 'ledgeRim'):
+    for inputId in ('fingerGrooveWidth', 'fingerGrooveDepth', 'ledgeRim', 'ledgeHeight'):
         form.setVisible(inputs, inputId, kind == L.HANDLE_LEDGE)
     form.setVisible(inputs, 'handleAlign', kind in (L.HANDLE_PULL, L.HANDLE_LEDGE))
     for inputId in ('pullBar', 'pullTop', 'pullSides'):
@@ -311,7 +327,7 @@ def _syncVisibility(inputs):
     hasLabel = p['label'] != L.LABEL_NONE
     for inputId in ('labelPos', 'labelWidth', 'labelHeight'):
         form.setVisible(inputs, inputId, hasLabel)
-    form.setVisible(inputs, 'wireDiameter', int(p['wireHoles']) > 0)
+    form.setVisible(inputs, 'wireDiameter', int(p['wireHoles']) > 0 or spools)
 
 
 def _updateInfo(inputs):
@@ -342,6 +358,28 @@ def _updateInfo(inputs):
                 lines.append('<font color="red">Too small for a Gridfinity cell - built empty</font>')
         if inputs.itemById(IN_FILL) and form.readOne(inputs.itemById(IN_FILL)) != FILL_ONE:
             lines.append('Creates {} inserts'.format(len(_slots(inputs, cab, p))))
+        if p['handle'] == L.HANDLE_LEDGE:
+            if ins['overlay']:
+                fr = (ins['panel']['x0'], ins['panel']['x1'], ins['panel']['z0'], ins['panel']['z1'])
+            else:
+                fr = (ins['x0'], ins['x1'], ins['z0'], ins['z1'])
+            _, band, _ = cabinetGeometry.frontLayout(L.withDefaults(p, L.INSERT_DEFAULTS), *fr)
+            ls = L.ledgeSize(L.withDefaults(p, L.INSERT_DEFAULTS), (band[3] - band[2]) - 0.2)
+            note = (' (raised: the groove needs it)' if ls['raised']
+                    else ' (limited by the front height)' if ls['capped'] else '')
+            lines.append('Ledge: {} mm high, sticks out {} mm, underside {:.0f}° from horizontal{}'.format(
+                mm(ls['H']), mm(ls['p']), ls['angle'], note))
+        sp = ins.get('spools')
+        if sp is not None and not sp['errors']:
+            maxD = (ins['z1'] - 0.1) - sp['floorZ'] - L.SPOOL_BOTTOM_GAP
+            lines.append('Spools: up to {} mm diameter fit, axle {} mm (printed as a separate body)'.format(
+                mm(maxD), mm(sp['axleD'])))
+            if p['handle'] == L.HANDLE_RECESS:
+                half = float(p['handleWidth']) / 2 + float(p['wall'])
+                xc = (ins['x0'] + ins['x1']) / 2
+                if any(abs(x - xc) < half + 0.3 for x in sp['centers']):
+                    lines.append('<font color="red">The recessed pull sits in front of a spool and blocks '
+                                 'its wire path - use a narrower or another handle</font>')
         for e in ins['errors']:
             lines.append(f'<font color="red">{e}</font>')
         inputs.itemById(IN_INFO).formattedText = '<br>'.join(lines)
@@ -354,7 +392,7 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     inputs = args.firingEvent.sender.commandInputs
     if args.input.id in (IN_CABINET, 'column', 'row', 'span'):
         _onCabinetChanged(inputs)
-    if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles'):
+    if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles', 'spoolCount', 'ledgeHeight'):
         _syncVisibility(inputs)
     _updateInfo(inputs)
 

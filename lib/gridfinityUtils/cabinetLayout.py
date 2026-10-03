@@ -25,6 +25,8 @@ insert size follows from walls, guides and clearances.
 All lengths in Fusion internal units (cm).
 """
 
+import math
+
 from . import const
 
 GUIDE_LEDGE = 'Ledges'
@@ -52,7 +54,8 @@ FRONT_STYLES = (FRONT_FLUSH, FRONT_OVERLAY)
 INTERIOR_EMPTY = 'Empty'
 INTERIOR_COMPARTMENTS = 'Compartments'
 INTERIOR_GRID = 'Gridfinity grid'
-INTERIOR_TYPES = (INTERIOR_EMPTY, INTERIOR_COMPARTMENTS, INTERIOR_GRID)
+INTERIOR_SPOOLS = 'Spools (wire)'
+INTERIOR_TYPES = (INTERIOR_EMPTY, INTERIOR_COMPARTMENTS, INTERIOR_GRID, INTERIOR_SPOOLS)
 
 HANDLE_NONE = 'None'
 HANDLE_RECESS = 'Recessed pull'
@@ -180,6 +183,8 @@ INSERT_DEFAULTS = {
     'fingerGrooveWidth': 1.0,
     'fingerGrooveDepth': 0.4,
     'ledgeRim': 0.2,
+    # Grooved ledge total height; 0 = 45° underside.
+    'ledgeHeight': 0.0,
     'handleAlign': ALIGN_TOP,
     'pullBar': 0.25,
     'pullTop': 0.2,
@@ -190,6 +195,11 @@ INSERT_DEFAULTS = {
     'labelHeight': 1.2,
     'wireHoles': 0,
     'wireDiameter': 0.5,
+    'spoolCount': 1,
+    'spoolDiameter': 5.0,
+    'spoolWidth': 2.5,
+    'spoolBore': 1.0,
+    'spoolGuides': True,
     'interior': INTERIOR_EMPTY,
     'divX': 2,
     'divY': 1,
@@ -413,7 +423,7 @@ def insert(cab: dict, insertParams: dict) -> dict:
     if w < 1.0 or h < 0.6:
         errors.append('Slot too small for an insert')
 
-    return {
+    result = {
         'p': ip,
         'slot': slot,
         'overlay': overlay,
@@ -425,6 +435,112 @@ def insert(cab: dict, insertParams: dict) -> dict:
         'panel': panel if overlay else None,
         'grooveCenter': grooveCenter(rowLo) if cab['grooved'] else None,
         'contact': contactStrips(cab, c, r0) if cp['detent'] else [],
+        'errors': errors,
+    }
+    result['spools'] = None
+    if ip['interior'] == INTERIOR_SPOOLS and not result['blank']:
+        result['spools'] = spoolLayout(result)
+        errors.extend(result['spools']['errors'])
+    return result
+
+
+def ledgeSize(ip: dict, avail: float) -> dict:
+    """Grooved ledge profile: protrusion p = rim + groove + rim, outer face
+    hh = rim, total height H (the underside runs straight from the outer
+    bottom edge to the front at H). H is the user's 'ledgeHeight' (0 = 45°),
+    raised if needed so at least one rim of material stays under the groove,
+    and fitted into `avail` (the groove shrinks first)."""
+    rim = max(0.08, float(ip['ledgeRim']))
+    wg = max(0.2, float(ip['fingerGrooveWidth']))
+    dg = max(0.05, float(ip['fingerGrooveDepth']))
+    wanted = float(ip.get('ledgeHeight') or 0.0)
+
+    def solve(wg, dg):
+        p = 2 * rim + wg
+        hh = rim
+        # Underside at distance s from the outer face: hh + (H - hh) * s / p
+        # below the top. Keep a rim under the groove bottom (centre) and under
+        # the start of a deep U groove's round part (s = rim).
+        need = [(rim + wg / 2, dg + rim)]
+        if dg > wg / 2:
+            need.append((rim, dg - wg / 2 + rim))
+        hMin = max(hh + max(0.0, depth - hh) * p / s for s, depth in need)
+        # Wanted (or 45°) height, capped by the front, never below hMin.
+        H = max(min(wanted if wanted > 0 else hh + p, avail), hMin)
+        return p, hh, H, hMin
+    p, hh, H, hMin = solve(wg, dg)
+    if hMin > avail:
+        # Even the lowest possible ledge is too high: shrink the groove.
+        wg = max(0.3, wg - (hMin - avail))
+        p, hh, H, hMin = solve(wg, dg)
+        if hMin > avail:
+            dg = max(0.05, dg - (hMin - avail))
+            p, hh, H, hMin = solve(wg, dg)
+    angle = math.degrees(math.atan2(H - hh, p))
+    return {'rim': rim, 'wg': wg, 'dg': dg, 'p': p, 'hh': hh, 'H': H, 'hMin': hMin,
+            'angle': angle, 'raised': wanted > 0 and H > wanted + 1e-6,
+            'capped': wanted > 0 and H < wanted - 1e-6}
+
+
+# Spool interior: cradle post thickness, spool side play, axle collar.
+SPOOL_POST = 0.3
+SPOOL_PLAY = 0.15
+SPOOL_COLLAR = 0.2
+SPOOL_COLLAR_GAP = 0.05
+SPOOL_BOTTOM_GAP = 0.2
+SPOOL_BACK_GAP = 0.2
+SPOOL_AXLE_PLAY = 0.08
+
+
+def spoolLayout(ins: dict) -> dict:
+    """Spool interior inside an insert (cabinet local cm): axle position,
+    cradle posts, spool centres, wire hole / guide positions, errors.
+
+    Spools hang on one axle across the drawer near the back; the wire runs
+    forward close to the floor through a guide eyelet to a hole in the front.
+    """
+    ip = ins['p']
+    tw = float(ip['wall'])
+    tf = float(ip['floor'])
+    frontT = 0.0 if ins['overlay'] else float(ip['front'])
+    px0, px1 = ins['x0'] + tw, ins['x1'] - tw
+    py0, py1 = ins['y0'] + frontT, ins['y1'] - tw
+    floorZ = ins['z0'] + tf
+    n = max(1, int(ip['spoolCount']))
+    D = float(ip['spoolDiameter'])
+    Ws = float(ip['spoolWidth'])
+    axleD = max(0.3, float(ip['spoolBore']) - SPOOL_AXLE_PLAY)
+    wireD = float(ip['wireDiameter'])
+    errors = []
+
+    end = SPOOL_COLLAR + SPOOL_COLLAR_GAP + 0.05          # collar room beside the outer posts
+    pitch = SPOOL_POST + Ws + 2 * SPOOL_PLAY
+    need = n * pitch + SPOOL_POST + 2 * end
+    avail = px1 - px0
+    if need > avail + 1e-9:
+        errors.append('{} spool(s) need {:.0f} mm, {:.0f} mm free inside'.format(n, need * 10, avail * 10))
+    zA = floorZ + SPOOL_BOTTOM_GAP + D / 2
+    maxD = (ins['z1'] - 0.1) - floorZ - SPOOL_BOTTOM_GAP
+    if D > maxD + 1e-9:
+        errors.append('Spool too big for this drawer: max {:.0f} mm diameter'.format(maxD * 10))
+    if axleD >= D - 0.4:
+        errors.append('Spool bore must be smaller than the spool')
+    yA = py1 - SPOOL_BACK_GAP - D / 2
+    spoolFront = yA - D / 2
+    if spoolFront - py0 < 1.0:
+        errors.append('Drawer too short for this spool: needs {:.0f} mm inside depth'.format(
+            (D + SPOOL_BACK_GAP + 1.0) * 10))
+
+    x = (px0 + px1) / 2 - (need - 2 * end) / 2
+    posts = [(x + i * pitch, x + i * pitch + SPOOL_POST) for i in range(n + 1)]
+    centers = [x + SPOOL_POST + SPOOL_PLAY + Ws / 2 + i * pitch for i in range(n)]
+    holeZ = floorZ + max(0.5, wireD / 2 + 0.25)
+    return {
+        'n': n, 'D': D, 'Ws': Ws, 'axleD': axleD, 'wireD': wireD,
+        'zA': zA, 'yA': yA, 'floorZ': floorZ,
+        'posts': posts, 'centers': centers,
+        'holeZ': holeZ, 'guideY': (py0 + spoolFront) / 2,
+        'axleX': (posts[0][0] - SPOOL_COLLAR - SPOOL_COLLAR_GAP, posts[-1][1] + SPOOL_COLLAR + SPOOL_COLLAR_GAP),
         'errors': errors,
     }
 

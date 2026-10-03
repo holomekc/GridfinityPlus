@@ -88,6 +88,9 @@ BIN_HEIGHT_UNITS_ID = 'bin_height_units'
 BIN_HEIGHT_MM_ID = 'bin_height_mm'
 HEIGHT_MODE_UNITS = 'Units'
 HEIGHT_MODE_MM = 'Total height'
+# Smallest height unit and smallest body height above the feet (cm).
+MIN_HEIGHT_UNIT = 0.2
+MIN_BODY_HEIGHT = 0.1
 BIN_WIDTH_INPUT_ID = 'bin_width'
 BIN_REAL_DIMENSIONS_TABLE = "real_dimensions"
 BIN_REAL_DIMENSIONS_TABLE_TOTAL_WIDTH = "total_real_width"
@@ -512,11 +515,15 @@ def is_all_input_valid(inputs: adsk.core.CommandInputs):
 
     result = result and base_width_unit.value > 1
     result = result and base_length_unit.value > 1
-    result = result and height_unit.value > 0.5
+    result = result and height_unit.value >= MIN_HEIGHT_UNIT
     result = result and xy_tolerance.value >= 0.01 and xy_tolerance.value <= 0.05
     result = result and bin_width.value > 0
     result = result and bin_length.value > 0
-    result = result and bin_height.value >= 1
+    # Any unit / total height is fine as long as some body is left above the
+    # feet (same formula as the body generator).
+    effH = bin_height.value
+    bodyH = (effH - 1) * height_unit.value + max(0.0, height_unit.value - const.BIN_BASE_HEIGHT)
+    result = result and (not bin_generate_body.value or bodyH >= MIN_BODY_HEIGHT)
     result = result and bin_wall_thickness.value >= 0.04 and bin_wall_thickness.value <= 0.2
     if bin_generate_base.value:
         result = result and (not bin_screw_holes.value or bin_screw_hole_diameter.value > 0.1) and (not bin_magnet_cutouts.value or bin_screw_hole_diameter.value < bin_magnet_cutout_diameter.value)
@@ -701,7 +708,9 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     baseLengthUnitInput.isMinimumInclusive = True
     commandUIState.registerCommandInput(baseLengthUnitInput)
     binHeightUnitInput = basicSizesGroup.children.addValueInput(BIN_HEIGHT_UNIT_INPUT_ID, 'Height unit', defaultLengthUnits, adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_HEIGHT_UNIT_INPUT_ID)))
-    binHeightUnitInput.minimumValue = 0.5
+    binHeightUnitInput.minimumValue = MIN_HEIGHT_UNIT
+    binHeightUnitInput.tooltip = ('Height of one Gridfinity unit (standard 7 mm). Smaller units are fine as '
+                                  'long as the bin keeps at least 1 mm of body above its feet.')
     binHeightUnitInput.isMinimumInclusive = True
     commandUIState.registerCommandInput(binHeightUnitInput)
     xyClearanceInput = basicSizesGroup.children.addValueInput(BIN_XY_CLEARANCE_INPUT_ID, 'Fit clearance', defaultLengthUnits, adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_XY_CLEARANCE_INPUT_ID)))
@@ -743,9 +752,9 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     commandUIState.registerCommandInput(heightUnitsInput)
     heightMmInput = binDimensionsGroup.children.addValueInput(
         BIN_HEIGHT_MM_ID, 'Height', defaultLengthUnits, adsk.core.ValueInput.createByReal(effH * hUnit))
-    heightMmInput.minimumValue = hUnit
+    heightMmInput.minimumValue = const.BIN_BASE_HEIGHT + MIN_BODY_HEIGHT
     heightMmInput.isMinimumInclusive = True
-    heightMmInput.tooltip = 'Total height without the stacking lip (at least one height unit)'
+    heightMmInput.tooltip = 'Total height without the stacking lip (feet 5 mm + at least 1 mm body)'
     commandUIState.registerCommandInput(heightMmInput)
     binHeightInput = binDimensionsGroup.children.addValueInput(BIN_HEIGHT_INPUT_ID, 'Height (effective units)', '', adsk.core.ValueInput.createByReal(effH))
     binHeightInput.isVisible = False

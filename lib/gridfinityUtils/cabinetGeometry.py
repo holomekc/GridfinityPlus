@@ -225,7 +225,19 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
 # -------------------------------------------------------------------- insert
 
 def buildInsert(des: adsk.fusion.Design, cabParams: dict, insertParams: dict) -> adsk.fusion.BRepBody:
-    """Insert temp body in the cabinet's local frame, closed position."""
+    """All parts of the insert merged into one temp body (dialog ghost)."""
+    parts = buildInsertParts(des, cabParams, insertParams)
+    if len(parts) == 1:
+        return parts[0]
+    merged = _tmgr().copy(parts[0])
+    for part in parts[1:]:
+        _union(merged, _tmgr().copy(part))
+    return merged
+
+
+def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dict):
+    """[insert body, separate parts...] in the cabinet's local frame, closed
+    position. Separate parts (spool axle) are printed on their own."""
     with gplog.timed('insert build'):
         cab = L.cabinet(cabParams)
         ins = L.insert(cab, insertParams)
@@ -298,7 +310,17 @@ def buildInsert(des: adsk.fusion.Design, cabParams: dict, insertParams: dict) ->
         adds, cuts = [], []
         handleX = _handle(ip, band, (fx0, fx1, fz0, fz1), yF, yB, z0, z1, tw, adds, cuts)
         _label(ip, labelRect, yF, adds, cuts)
-        _wireHoles(ip, band, ([handleX] if handleX else []) + blocked, yF, yB, cuts)
+        spools = ins['spools']
+        extraParts = []
+        if spools is not None:
+            # Wire outlets sit in front of each spool, low above the floor.
+            for xc in spools['centers']:
+                _wireHole(xc, spools['holeZ'], spools['wireD'] / 2, yF, yB, cuts)
+            spoolAdds, axle = _spoolParts(spools, bool(ip['spoolGuides']))
+            adds.extend(spoolAdds)
+            extraParts.append(axle)
+        else:
+            _wireHoles(ip, band, ([handleX] if handleX else []) + blocked, yF, yB, cuts)
         if adds:
             _union(body, _unionAll(adds))
 
@@ -325,11 +347,13 @@ def buildInsert(des: adsk.fusion.Design, cabParams: dict, insertParams: dict) ->
         if cuts:
             _subtract(body, _unionAll(cuts))
 
+        parts = [body] + extraParts
         pull = float(ip.get('pullOut', 0.0))
         if pull:
-            _translate(body, 0.0, -pull, 0.0)
-        gplog.log(f'insert build: faces={body.faces.count} errors={ins["errors"]}')
-        return body
+            for part in parts:
+                _translate(part, 0.0, -pull, 0.0)
+        gplog.log(f'insert build: parts={len(parts)} faces={body.faces.count} errors={ins["errors"]}')
+        return parts
 
 
 LABEL_MARGIN = 0.25
@@ -363,6 +387,11 @@ def frontLayout(ip, fx0, fx1, fz0, fz1):
     notch = ip['handle'] == L.HANDLE_NOTCH
     needHandle = 0.0 if ip['handle'] == L.HANDLE_NONE else max(1.0, float(ip['handleHeight'])) + 0.4
     lhWanted = float(ip['labelHeight'])
+    spoolDrawer = ip.get('interior') == L.INTERIOR_SPOOLS and ip.get('insertType') != L.INSERT_BLANK
+    if spoolDrawer and pos in (L.LABEL_AUTO, L.LABEL_BOTTOM):
+        # Wire outlets sit low in front of the spools: keep the label up.
+        stacked = H >= needHandle + lhWanted + 2 * frame + LABEL_MARGIN + 0.2
+        pos = L.LABEL_TOP if stacked else L.LABEL_LEFT
     if pos == L.LABEL_AUTO:
         stacked = H >= needHandle + lhWanted + 2 * frame + LABEL_MARGIN + 0.2
         pos = L.LABEL_BOTTOM if stacked else L.LABEL_LEFT
@@ -420,6 +449,46 @@ def _label(ip, rect, yF, adds, cuts):
     _subtract(holder, _box(lx0, lx1, yF - g, yF, lz0, lz1 + 1.0))
     _subtract(holder, _box(lx0 + e, lx1 - e, yF - g - t - 0.1, yF - g + _EPS, lz0 + e, lz1 + 1.0))
     adds.append(holder)
+
+
+def _wireHole(x, z, rad, yF, yB, cuts):
+    """One wire outlet through the front, chamfered on the outside."""
+    cuts.append(_cylinderAxis((x, yF - 0.1, z), (x, yB + _EPS, z), rad))
+    cuts.append(_cone((x, yF - _EPS, z), rad + 0.1 + _EPS, (x, yF + 0.1, z), rad))
+
+
+def _spoolParts(sp, guides: bool):
+    """(parts to add to the insert, separate axle body) for the spool interior.
+
+    Cradles: posts with an open-top U slot, at both ends and between the
+    spools (they keep the spools apart). Guides: a small post with an eyelet
+    in line with each wire outlet. Axle: rod with collars outside the outer
+    posts and a flat underside so it prints lying down."""
+    adds = []
+    r = sp['axleD'] / 2
+    yA, zA, floorZ = sp['yA'], sp['zA'], sp['floorZ']
+    slotR = r + 0.03
+    for xa, xb in sp['posts']:
+        post = _box(xa, xb, yA - slotR - L.SPOOL_POST, yA + slotR + L.SPOOL_POST, floorZ - _EPS, zA + r * 0.6)
+        _subtract(post, _cylinderAxis((xa - 0.1, yA, zA), (xb + 0.1, yA, zA), slotR))
+        _subtract(post, _box(xa - 0.1, xb + 0.1, yA - slotR, yA + slotR, zA, zA + 5.0))
+        adds.append(post)
+    if guides:
+        wr = sp['wireD'] / 2
+        gy, hz = sp['guideY'], sp['holeZ']
+        for xc in sp['centers']:
+            guide = _box(xc - 0.4, xc + 0.4, gy - 0.15, gy + 0.15, floorZ - _EPS, hz + wr + 0.3)
+            _subtract(guide, _cylinderAxis((xc, gy - 1.0, hz), (xc, gy + 1.0, hz), wr + 0.05))
+            adds.append(guide)
+
+    xa, xb = sp['axleX']
+    axle = _cylinderAxis((xa, yA, zA), (xb, yA, zA), r)
+    rc = r + 0.25
+    pa, pb = sp['posts'][0][0], sp['posts'][-1][1]
+    _union(axle, _cylinderAxis((xa, yA, zA), (pa - L.SPOOL_COLLAR_GAP, yA, zA), rc))
+    _union(axle, _cylinderAxis((pb + L.SPOOL_COLLAR_GAP, yA, zA), (xb, yA, zA), rc))
+    _subtract(axle, _box(xa - 1, xb + 1, yA - rc - 1, yA + rc + 1, zA - rc - 1, zA - r * 0.85))
+    return adds, axle
 
 
 def _wireHoles(ip, band, blocked, yF, yB, cuts):
@@ -584,29 +653,16 @@ def _pullHandle(ip, xc, w, bz0, bz1, yF):
 
 
 def _ledgeHandle(ip, xc, w, bz0, bz1, yF):
-    """Closed wedge (45° underside, no cavity) with a finger groove on top.
-
-    Defined from the top only: groove width + depth and the rim around it.
-    Protrusion = rim + groove + rim; the outer face is just high enough that
-    the 45° underside stays at least one rim below the groove."""
-    rim = max(0.08, float(ip['ledgeRim']))
-    wg = max(0.2, float(ip['fingerGrooveWidth']))
-    dg = max(0.05, float(ip['fingerGrooveDepth']))
-    avail = (bz1 - bz0) - 0.2
-
-    def size(wg, dg):
-        hh = max(rim, dg - wg / 2 + rim * 0.5)
-        return hh, 2 * rim + wg
-    hh, p = size(wg, dg)
-    if hh + p > avail:
-        wg = max(0.3, wg - (hh + p - avail))
-        hh, p = size(wg, dg)
-        if hh + p > avail:
-            dg = max(0.05, dg - (hh + p - avail))
-            hh, p = size(wg, dg)
-    zt = _alignTop(ip, bz0, bz1, hh + p)
-    ledge = _prismYZ(xc - w / 2, xc + w / 2, yF - p, yF + _EPS, zt - hh - p, zt,
-                     [((0, yF - p, zt - hh), (0, -1, -1))])
+    """Closed wedge with a finger groove on top. Defined from the top (groove
+    width + depth, rim) plus its total height, which sets the slope of the
+    underside: higher = steeper = easier to print (see cabinetLayout.ledgeSize)."""
+    ls = L.ledgeSize(ip, (bz1 - bz0) - 0.2)
+    rim, wg, dg, p, hh, H = ls['rim'], ls['wg'], ls['dg'], ls['p'], ls['hh'], ls['H']
+    zt = _alignTop(ip, bz0, bz1, H)
+    # Underside: from the outer bottom edge (yF - p, zt - hh) to the front
+    # face at zt - H.
+    ledge = _prismYZ(xc - w / 2, xc + w / 2, yF - p, yF + _EPS, zt - H, zt,
+                     [((0, yF - p, zt - hh), (0, -(H - hh), -p))])
     yc = yF - rim - wg / 2
     xa, xb = xc - w / 2 - 0.1, xc + w / 2 + 0.1
     if dg <= wg / 2:
