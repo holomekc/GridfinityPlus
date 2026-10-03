@@ -7,6 +7,8 @@ from .commandCreateBin import entry as commandCreateBin
 from .commandEditBaseplate import entry as commandEditBaseplate
 from .commandCreateBaseplate import entry as commandCreateBaseplate
 from .commandToolCutout import entry as commandToolCutout
+from .commandCreateCabinet import entry as commandCreateCabinet
+from .commandCreateDrawer import entry as commandCreateDrawer
 
 # TODO add imported modules to this list.
 # Fusion will automatically call the start() and stop() functions.
@@ -18,6 +20,8 @@ commands = [
     commandEditBaseplate,
     commandCreateBaseplate,
     commandToolCutout,
+    commandCreateCabinet,
+    commandCreateDrawer,
 ]
 
 

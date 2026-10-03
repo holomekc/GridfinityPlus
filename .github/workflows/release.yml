@@ -1,26 +1,43 @@
+name: Release
+
 on:
   push:
-    tags:
-      - '*'
-name: Handle Release
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
 jobs:
-  generate-installer:
-    name: Create release-artifacts
-    runs-on: windows-latest
+  release:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Create zip file for manual installation
-        uses: vimtor/action-zip@v1.2
+      - uses: actions/checkout@v5
         with:
-          files: GridfinityPlus.manifest GridfinityPlus.py config.py LICENSE.md lib/ commands/ documentation/PRIVACY_POLICY.md
-          recursive: false
-          dest: dist/GridfinityPlus-${{ github.ref_name }}.zip
-      - name: Upload the artifacts
-        uses: svenstaro/upload-release-action@v2
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/*
-          file_glob: true
-          tag: ${{ github.ref }}
-          body: TBD
-          prerelease: true
+          node-version: 24
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_AUTHOR_NAME: holomekc
+          GIT_AUTHOR_EMAIL: 30546982+holomekc@users.noreply.github.com
+          GIT_COMMITTER_NAME: holomekc
+          GIT_COMMITTER_EMAIL: 30546982+holomekc@users.noreply.github.com
+        run: >
+          npx --yes
+          -p semantic-release@25
+          -p @semantic-release/exec@7
+          -p @semantic-release/git@10
+          -p conventional-changelog-conventionalcommits@9
+          semantic-release
