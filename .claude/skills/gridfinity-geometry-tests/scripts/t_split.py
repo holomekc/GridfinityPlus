@@ -34,6 +34,14 @@ ys = pl['ys'][0]; mx = 2 * 4.2 + 2.1 - 0.025
 check('y seam gap', t, (3.0, ys, -0.6), False)
 check('y tab', t, (mx, ys + 0.25, -0.6), True)
 check('cross point gap', t, (s, ys, -0.6), False)
+# Seam gap and dovetail clearance are separate.
+sep = dict(base, splitClearance=0.04, splitDovetailClearance=0.01)
+t2 = S.split(plate, sep)
+check('wide seam gap', t2, (s + 0.015, 3.0, -0.6), False)
+check('tight dovetail: socket gap', t2, (s + 0.3 + 0.007, m, -0.6), False)
+check('tight dovetail: right tile just past the gap', t2, (s + 0.3 + 0.013, m, -0.6), True)
+assert S.dovetailClearance(base) == base.get('splitClearance', S.DEFAULTS[S.KEY_CLEARANCE])
+assert S.dovetailClearance(dict(base, splitClearance=0.03)) == 0.03     # old plates: one value for both
 off = dict(base, splitMode=S.SPLIT_OFF)
 assert S.split(plate, off) is plate
 small = dict(base, plateWidth=4, plateLength=4)

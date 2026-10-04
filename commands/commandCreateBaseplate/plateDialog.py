@@ -42,6 +42,7 @@ SPLIT_MAX_W = 'split_max_width'
 SPLIT_MAX_D = 'split_max_depth'
 SPLIT_CONNECTOR = 'split_connector'
 SPLIT_CLEARANCE = 'split_clearance'
+SPLIT_DOVETAIL_CLEARANCE = 'split_dovetail_clearance'
 SPLIT_INFO = 'split_info'
 
 # ------------------------------------------------------- non-table input ids
@@ -182,8 +183,11 @@ FIELDS = [
         group=SPLIT_GROUP, choices=plateSplit.CONNECTORS,
         tooltip='Dovetail: one per cell along each seam, through the full height.\n'
                 'Push the tiles together from the top; they then hold sideways.')),
-    (SPLIT_CLEARANCE, plateSplit.KEY_CLEARANCE, 'length', 'Connector clearance', plateSplit.DEFAULTS[plateSplit.KEY_CLEARANCE], dict(
-        group=SPLIT_GROUP, min=0.0, max=0.1, tooltip='Gap around the dovetails and along the seams (default 0.15 mm)')),
+    (SPLIT_CLEARANCE, plateSplit.KEY_CLEARANCE, 'length', 'Seam gap', plateSplit.DEFAULTS[plateSplit.KEY_CLEARANCE], dict(
+        group=SPLIT_GROUP, min=0.0, max=0.1, tooltip='Gap between the tiles along the seams, plate to plate (default 0.15 mm)')),
+    (SPLIT_DOVETAIL_CLEARANCE, plateSplit.KEY_DOVETAIL_CLEARANCE, 'length', 'Dovetail clearance',
+     plateSplit.DEFAULTS[plateSplit.KEY_DOVETAIL_CLEARANCE], dict(
+        group=SPLIT_GROUP, min=0.0, max=0.1, tooltip='Gap all around each dovetail in its socket (default 0.15 mm)')),
 ]
 
 FIELD_BY_ID = {f[0]: f for f in FIELDS}
@@ -218,6 +222,7 @@ def valuesFromParams(params: dict) -> dict:
             vals[fid] = params[key]
     if not params.get(placement.KEY_FRAME):
         vals[CUSTOM_ANCHOR] = False
+    vals[SPLIT_DOVETAIL_CLEARANCE] = plateSplit.dovetailClearance(params)
     return vals
 
 
@@ -420,6 +425,9 @@ def refresh(inputs: adsk.core.CommandInputs):
         on = bool(mode and mode.selectedItem and mode.selectedItem.name == plateSplit.SPLIT_MAX)
         for fid in (SPLIT_MAX_W, SPLIT_MAX_D, SPLIT_CONNECTOR, SPLIT_CLEARANCE, SPLIT_INFO):
             show(fid, on)
+        conn = adsk.core.DropDownCommandInput.cast(_get(inputs, SPLIT_CONNECTOR))
+        dovetail = bool(conn and conn.selectedItem and conn.selectedItem.name == plateSplit.CONN_DOVETAIL)
+        show(SPLIT_DOVETAIL_CLEARANCE, on and dovetail)
         if on:
             _setText(inputs, SPLIT_INFO, plateSplit.describe(readParams(inputs)))
     except Exception:

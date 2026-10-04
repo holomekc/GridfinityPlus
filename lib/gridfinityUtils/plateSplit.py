@@ -27,7 +27,8 @@ KEY_MODE = 'splitMode'
 KEY_MAX_W = 'splitMaxWidth'
 KEY_MAX_D = 'splitMaxDepth'
 KEY_CONNECTOR = 'splitConnector'
-KEY_CLEARANCE = 'splitClearance'
+KEY_CLEARANCE = 'splitClearance'            # seam gap, tile to tile
+KEY_DOVETAIL_CLEARANCE = 'splitDovetailClearance'   # gap around the dovetail
 
 SPLIT_OFF = 'Off'
 SPLIT_MAX = 'Max print size'
@@ -43,6 +44,7 @@ DEFAULTS = {
     KEY_MAX_D: 25.0,
     KEY_CONNECTOR: CONN_DOVETAIL,
     KEY_CLEARANCE: 0.015,
+    KEY_DOVETAIL_CLEARANCE: 0.015,
 }
 
 # Dovetail (top view): neck width at the seam, head width, depth across it.
@@ -55,6 +57,13 @@ DOVETAIL_DEPTH_FLOOR = 0.3
 def _get(params: dict, key):
     v = params.get(key)
     return DEFAULTS[key] if v is None else v
+
+
+def dovetailClearance(params: dict) -> float:
+    """Gap around the dovetail. Plates made before it was separate used the
+    seam gap for both."""
+    v = params.get(KEY_DOVETAIL_CLEARANCE)
+    return float(_get(params, KEY_CLEARANCE) if v is None else v)
 
 
 def enabled(params: dict) -> bool:
@@ -173,6 +182,7 @@ def pieces(tempBody, params: dict):
     zb = plateLayout.zBottom(params)
     z0, z1 = zb - 1.0, 1.0
     c = float(_get(params, KEY_CLEARANCE))
+    dc = dovetailClearance(params)
     big = 1000.0
     bx = [-big] + pl['xs'] + [big]
     by = [-big] + pl['ys'] + [big]
@@ -198,7 +208,7 @@ def pieces(tempBody, params: dict):
                     continue
                 tabs.append((k, j, _dovetail(0, s, m, DOVETAIL_NECK, DOVETAIL_HEAD, depth, z0, z1, 0.3)))
                 sockets.append((k + 1, j, _dovetail(0, s, m, DOVETAIL_NECK, DOVETAIL_HEAD,
-                                                    depth, z0 - 1, z1 + 1, 0.3, c)))
+                                                    depth, z0 - 1, z1 + 1, 0.3, dc)))
         for k, s in enumerate(pl['ys']):
             for m in midsX:
                 i = next(t for t in range(nx) if bx[t] <= m < bx[t + 1])
@@ -206,7 +216,7 @@ def pieces(tempBody, params: dict):
                     continue
                 tabs.append((i, k, _dovetail(1, s, m, DOVETAIL_NECK, DOVETAIL_HEAD, depth, z0, z1, 0.3)))
                 sockets.append((i, k + 1, _dovetail(1, s, m, DOVETAIL_NECK, DOVETAIL_HEAD,
-                                                    depth, z0 - 1, z1 + 1, 0.3, c)))
+                                                    depth, z0 - 1, z1 + 1, 0.3, dc)))
         for i, j, tab in tabs:
             _union(regions[i][j], tab)
         for i, j, sock in sockets:

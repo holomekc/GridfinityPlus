@@ -22,6 +22,7 @@ Parametric pieces (Gridfinity foot, baseplate cell cutout) are replaced by simpl
 |---|---|---|
 | `t_import.py` | all command modules import | 1 s |
 | `t_feet.py` | feet never stick out past the walls (real-size fake foot: cell + clearance), partial cells reach the outline | 3 s |
+| `t_backcorner.py` | ledges / grooves never poke through the rounded outer back corner, wall keeps its thickness there, drawer clears the rounded interior corner | 20 s |
 | `t_cover.py` | grid cover: slab, feet, fill to edge (border / partial cell) | 1 s |
 | `t_spool.py` | spool drawer: cradles, open U slot, eyelets, outlets, separate axle that never touches the drawer, size errors | 5 s |
 | `t_spool2.py` | spool slot width (width + 2 x play), divider / end thickness, snap-in lips, outlet heights + offset; label positions with / without handle, offsets clamped | 10 s |
@@ -29,6 +30,7 @@ Parametric pieces (Gridfinity foot, baseplate cell cutout) are replaced by simpl
 | `t_spoolcheck.py` | spool fit check (collision of each spool with the finished drawer, sampled), spool preview body + names | 20 s |
 | `t_mount.py` | cabinet wall mount: every screw size and head type, head flush inside, back wall thickness, holes off dividers | 5 s |
 | `t_split.py` | baseplate split plan, one body per tile, dovetail gap equal along the flank | 2 s |
+| `t_platecorner.py` | baseplate outline: corners next to a partial cell stay square, clean ends rounded (final cut + preview) | 2 s |
 | `test_geom.py` | cabinet/insert probes (walls, ledges, grooves, detent, handles, knobs, labels, wire holes, overhang, top grid) + collision scan cabinet vs. insert, closed and pulled out | ~2-3 min |
 | `t_dialogs.py` | builds the bin, cabinet, drawer and cover dialogs against fake inputs that reject non-ASCII / duplicate input ids (Fusion: "invalid argument id") | 3 s |
 | `t_bin2.py` | builds the bin dialog 3x in a row; each run must reach the handler attach line (~874, `add_handler` KeyError is the mock's limit, not a bug) | 2 s |

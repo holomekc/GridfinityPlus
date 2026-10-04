@@ -102,6 +102,22 @@ def _roundedSlab(x0, x1, y0, y1, z0, z1, r):
     return slab
 
 
+def _outlineSlab(x0, x1, y0, y1, z0, z1, r, square=()):
+    """Rounded-rectangle prism; corners next to a side in `square` ('left',
+    'right', 'front', 'back') stay square (a partial cell is cut straight)."""
+    if r <= 0 or not square:
+        return _roundedSlab(x0, x1, y0, y1, z0, z1, r)
+    slab = _box(x0, x1, y0, y1, z0, z1)
+    for cx, sx, sideX in ((x0, 1, 'left'), (x1, -1, 'right')):
+        for cy, sy, sideY in ((y0, 1, 'front'), (y1, -1, 'back')):
+            if sideX in square or sideY in square:
+                continue
+            _subtract(slab, _box(min(cx, cx + sx * r), max(cx, cx + sx * r),
+                                 min(cy, cy + sy * r), max(cy, cy + sy * r), z0 - 1, z1 + 1))
+            _union(slab, _cylinder(cx + sx * r, cy + sy * r, z0, z1, r))
+    return slab
+
+
 def _getCellCutout(des: adsk.fusion.Design, baseWidth: float, baseLength: float, xyClearance: float):
     """Single-cell cutting body, built parametrically once and cached.
 
@@ -221,7 +237,8 @@ def buildPreviewPlate(des: adsk.fusion.Design, params: dict):
         r = const.BIN_CORNER_FILLET_RADIUS - cl
 
         # Outline: whole cells (+ padding) or the exact-size window.
-        slab = _roundedSlab(lo['x0'], lo['x1'], lo['y0'], lo['y1'], zBottom, 0.0, r)
+        slab = _outlineSlab(lo['x0'], lo['x1'], lo['y0'], lo['y1'], zBottom, 0.0, r,
+                            plateLayout.partialSides(lo))
 
         # Collect ALL cutting tools, merge once, subtract once.
         tools = []

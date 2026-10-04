@@ -421,6 +421,10 @@ def cabinet(params: dict) -> dict:
     if grooved and any(r['height'] < 2 * gd + GROOVE_TIP + 0.4 for r in rows):
         errors.append('Rows too low for the grooves')
 
+    radius = const.BIN_CORNER_FILLET_RADIUS - float(p['cl'])
+    # Interior back corners are rounded concentric with the outside so the
+    # wall keeps its thickness there; ledges / grooves end where they start.
+    backCornerR = max(0.0, radius - wall)
     cab = {
         'p': p,
         'aW': aW, 'aL': aL,
@@ -429,7 +433,10 @@ def cabinet(params: dict) -> dict:
         'detentR': float(p['detentHeight']) if p['detent'] else 0.0,
         'partial': {k: bool(v) for k, v in ((ovh.get('partial') or {}).items())},
         'zBottom': zBottom, 'zTop': zTop,
-        'radius': const.BIN_CORNER_FILLET_RADIUS - float(p['cl']),
+        'radius': radius, 'backCornerR': backCornerR,
+        # A groove's tip is deeper in the wall: it must end before the outer
+        # corner starts curving (back - radius) to keep the wall there.
+        'guideEnd': min(innerBack - backCornerR, oy1 - radius),
         'wall': wall, 'divider': divider, 'backWall': backWall,
         'floorTop': floorTop, 'ceil': ceil, 'innerBack': innerBack,
         'topIsGrid': topIsGrid,

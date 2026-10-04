@@ -167,13 +167,34 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
         # ledges / flush inserts would stick out.
         rFront = min(cab['radius'], cab['wall'])
         body = _slab(ox0, ox1, front, back, cab['zBottom'], cab['zTop'], rFront, cab['radius'])
+        if cab['topIsGrid'] and cab['radius'] > rFront:
+            # Grid on top: where a full cell's corner is the body's front
+            # corner, round that layer like the pocket, else a flat stub stays
+            # standing next to it. Not over a border / partial cell: there the
+            # pockets are cut straight at the edge.
+            R, zg = cab['radius'], cab['zTop'] - const.BIN_BASE_HEIGHT
+            cuts = []
+            for cx, sx, flush in ((ox0, 1, abs(ox0) < 1e-6), (ox1, -1, abs(ox1 - cab['aW']) < 1e-6)):
+                if not flush or abs(front) > 1e-6:
+                    continue
+                corner = _box(min(cx, cx + sx * R), max(cx, cx + sx * R), front - 0.1, front + R,
+                              zg, cab['zTop'] + 0.1)
+                _subtract(corner, _cylinderAxis((cx + sx * R, front + R, zg - 0.1),
+                                                (cx + sx * R, front + R, cab['zTop'] + 0.2), R))
+                cuts.append(corner)
+            if cuts:
+                _subtract(body, _unionAll(cuts))
 
         # Interior: one open-front pocket per column.
-        pockets = [_box(x0, x1, front - 1.0, cab['innerBack'], cab['floorTop'], cab['ceil'])
+        # Back corners rounded like the outside: the wall keeps its thickness.
+        pockets = [_slab(x0, x1, front - 1.0, cab['innerBack'], cab['floorTop'], cab['ceil'],
+                         0.0, cab['backCornerR'])
                    for x0, x1 in cab['columns']]
         _subtract(body, _unionAll(pockets))
 
-        y1 = cab['innerBack'] + _EPS
+        # Guides end where the rounded back corner starts (else they poke
+        # through the rounded outer corner).
+        y1 = cab['guideEnd']
         adds, cuts = [], []
         for x0, x1 in cab['columns']:
             for i, row in enumerate(cab['rows']):
@@ -185,7 +206,12 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
                     adds.append(_ledge(x0, +1, front, y1, row['bottom'], cab['ledgeThickness'], cab['ledgeDepth']))
                     adds.append(_ledge(x1, -1, front, y1, row['bottom'], cab['ledgeThickness'], cab['ledgeDepth']))
         if adds:
-            _union(body, _unionAll(adds))
+            # Ledges reach a little into the wall; clip them to the outer
+            # shape so they never poke through the rounded corners.
+            adds = _unionAll(adds)
+            envelope = _slab(ox0, ox1, front, back, cab['zBottom'], cab['zTop'], rFront, cab['radius'])
+            _tmgr().booleanOperation(adds, envelope, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+            _union(body, adds)
         if cuts:
             _subtract(body, _unionAll(cuts))
 
@@ -257,7 +283,9 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
         tf = float(ip['floor'])
         frontT = float(ip['front'])
 
-        body = _roundedSlab(x0, x1, y0, y1, z0, z1, 0.1)
+        # Back corners follow the cabinet's rounded interior back corners.
+        rBack = max(0.1, cab['backCornerR'])
+        body = _slab(x0, x1, y0, y1, z0, z1, 0.1, rBack)
         panel = ins['panel']
         if panel is not None:
             _union(body, _box(panel['x0'], panel['x1'], panel['y0'], panel['y1'] + _EPS, panel['z0'], panel['z1']))
@@ -270,9 +298,11 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
             gc = ins['grooveCenter']
             gd = cab['grooveDepth']
             fit = float(cp['fitLateral'])
+            # The grooves end before the rounded back corner.
+            ry1 = min(y1, cab['guideEnd'] - float(cp['fitBack']))
             runners = [
-                _runner(ins['colX0'], +1, y0, y1, gc, gd, fit, x0 + tw / 2),
-                _runner(ins['colX1'], -1, y0, y1, gc, gd, fit, x1 - tw / 2),
+                _runner(ins['colX0'], +1, y0, ry1, gc, gd, fit, x0 + tw / 2),
+                _runner(ins['colX1'], -1, y0, ry1, gc, gd, fit, x1 - tw / 2),
             ]
             _union(body, _unionAll(runners))
 
@@ -313,7 +343,12 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
                     tool = _tmgr().copy(cell)
                     _translate(tool, ox + i * b, oy + j * d, pz0)
                     tools.append(tool)
-        _subtract(body, _unionAll(tools))
+        tools = _unionAll(tools)
+        if interior != L.INTERIOR_GRID and rBack - tw > 0.05:
+            # Keep the wall thickness in the rounded back corners.
+            envelope = _slab(px0, px1, py0, py1, pz0 - 0.01, top + 0.5, 0.0, rBack - tw)
+            _tmgr().booleanOperation(tools, envelope, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+        _subtract(body, tools)
 
         # Front: label band + handle band, wire outlets.
         labelRect, band, blocked = frontLayout(ip, fx0, fx1, fz0, fz1)

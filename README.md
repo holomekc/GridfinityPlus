@@ -27,7 +27,7 @@ editable after the fact.
   anchor point (centre or corner), rotate in 90° steps and offset along X / Y / Z of the chosen plane.
 - **Split for printing**: plates bigger than the print bed are cut into tiles (max tile width × depth). Seams run
   between cells, tiles are as even as possible. Optional vertical dovetails (one per cell along each seam): push the
-  tiles together from the top. Every tile is its own body (`… - tile 1/6`), assembled in place — export each body
+  tiles together from the top. Seam gap (tile to tile) and dovetail clearance are set separately. Every tile is its own body (`… - tile 1/6`), assembled in place — export each body
   for printing.
 - **Fast live preview** that updates while you type.
 - **Works in Part Design documents** (single-component designs), including several plates in one part.

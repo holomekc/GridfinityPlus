@@ -233,14 +233,23 @@ def generatorParams(params: dict) -> dict:
     return g
 
 
+def partialSides(lo: dict):
+    """Sides ending in a partial cell (cut straight: no rounded corners there)."""
+    return tuple(side for side, key in (('left', 'partLeft'), ('right', 'partRight'),
+                                        ('front', 'partFront'), ('back', 'partBack'))
+                 if lo[key] > _EPS)
+
+
 def cutToSize(tempBody, params: dict):
-    """Partial cells: intersect the covering plate with the exact outline."""
-    if not layout(params)['needsCut']:
+    """Partial cells: intersect the covering plate with the exact outline.
+    Only clean ends are rounded; corners next to a partial cell stay square."""
+    lo = layout(params)
+    if not lo['needsCut']:
         return tempBody
-    from .baseplateFastPreview import _roundedSlab
+    from .baseplateFastPreview import _outlineSlab
     x0, x1, y0, y1, zb = localExtents(params)
     r = const.BIN_CORNER_FILLET_RADIUS - params['xyClearance']
-    window = _roundedSlab(x0, x1, y0, y1, zb - 0.1, 0.1, r)
+    window = _outlineSlab(x0, x1, y0, y1, zb - 0.1, 0.1, r, partialSides(lo))
     adsk.fusion.TemporaryBRepManager.get().booleanOperation(
         tempBody, window, adsk.fusion.BooleanTypes.IntersectionBooleanType)
     return tempBody
