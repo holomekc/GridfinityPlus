@@ -5,6 +5,9 @@ An [Autodesk Fusion](https://www.autodesk.com/products/fusion-360) add-in for ge
 grid-aware workflow: plates you can place anywhere and cut to exact sizes, bins that snap onto them, and everything
 editable after the fact.
 
+![Example: a cabinet wall with drawers, spool drawers and bins on Gridfinity baseplates](images/example.png)
+*Example: cabinets with drawers and Gridfinity bins, all made with this add-in.*
+
 > [!WARNING]
 > **This fork is vibe-coded.** All changes on top of the original add-in were written by an AI assistant (Claude)
 > in a conversational "describe it, try it in Fusion, describe what's wrong" loop. Every feature was tried in Fusion,

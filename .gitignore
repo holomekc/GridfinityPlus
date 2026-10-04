@@ -6,3 +6,4 @@ commandConfig
 *.wixpdb
 /dist
 *.log
+scene_stats.txt
