@@ -261,6 +261,39 @@ def featureOfBody(entity):
     return None
 
 
+class BodyIndex:
+    """Bodies of some features, collected once (dialog open), so hovering
+    (preSelect, fires on every mouse move) is a dict lookup instead of a walk
+    over all custom features of the component."""
+
+    def __init__(self, features):
+        self.byToken, self.bodies = {}, []
+        for cf in features:
+            try:
+                for f in cf.features:
+                    bf = adsk.fusion.BaseFeature.cast(f)
+                    if bf is None:
+                        continue
+                    for b in bf.bodies:
+                        self.bodies.append((b, cf))
+                        self.byToken[b.entityToken] = cf
+            except Exception:
+                gplog.logExc('BodyIndex')
+
+    def feature(self, entity):
+        body = adsk.fusion.BRepBody.cast(entity)
+        if body is None:
+            return None
+        try:
+            native = body.nativeObject if body.nativeObject else body
+            cf = self.byToken.get(native.entityToken)
+            if cf is not None:
+                return cf
+            return next((c for b, c in self.bodies if b == native), None)
+        except Exception:
+            return None
+
+
 def plateLabelOfBody(entity, choices: dict):
     """Label in `choices` ({label: (token, grid)}) of the plate / cabinet /
     bin the clicked body belongs to, else None."""

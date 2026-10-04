@@ -3,6 +3,7 @@ import os
 import math
 import json
 import types
+import time
 
 
 from ...lib import configUtils
@@ -173,6 +174,8 @@ _plateChoices = {}
 # _createSeed seeds new bins after a copy.
 _pasteSeed = None
 _createSeed = None
+_plateBodies = None   # BodyIndex of the plate / cabinet / bin bodies (preSelect)
+_plateLabels = {}     # plate feature entityToken -> label
 _lastClick = None      # view ray of the last click (cell picking)
 # CustomFeature being edited, or None in create mode (edit = double-click on
 # a bin feature; this command is its own edit command).
@@ -688,10 +691,21 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     des = adsk.fusion.Design.cast(app.activeProduct)
     # Bins with a stacking lip are plates too; never the edited bin itself or
     # a bin standing on it.
-    blocked = [] if _editedFeature is None else [_editedFeature] + binFeature.binsAbove(des, _editedFeature)
-    plates = [pl for pl in binFeature.listPlates(des, includeBins=True)
-              if pl[2].entity not in blocked] if des else []
+    with gplog.timed('bin dialog: list plates'):
+        blocked = [] if _editedFeature is None else [_editedFeature] + binFeature.binsAbove(des, _editedFeature)
+        plates = [pl for pl in binFeature.listPlates(des, includeBins=True)
+                  if pl[2].entity not in blocked] if des else []
     _plateChoices = {label: (token, grid) for label, token, grid in plates}
+    global _plateBodies, _plateLabels
+    with gplog.timed('bin dialog: body index'):
+        _plateBodies = binFeature.BodyIndex([grid.entity for _, _, grid in plates
+                                             if adsk.fusion.CustomFeature.cast(grid.entity)])
+    _plateLabels = {}
+    for label, _, grid in plates:
+        try:
+            _plateLabels[grid.entity.entityToken] = label
+        except Exception:
+            pass
     gplog.log(f'bin dialog: plates found={[label for label, _, _ in plates]}')
     gridGroup = inputs.addGroupCommandInput(GRID_PLACEMENT_GROUP, 'Placement')
     gridGroup.isExpanded = True
@@ -1101,9 +1115,26 @@ def command_pre_select(args: adsk.core.SelectionEventArgs):
     try:
         if args.activeInput is None or args.activeInput.id != GRID_PLATE_SELECT:
             return
-        args.isSelectable = binFeature.plateLabelOfBody(args.selection.entity, _plateChoices) is not None
+        start = time.perf_counter()
+        args.isSelectable = _plateLabelOf(args.selection.entity) is not None
+        ms = (time.perf_counter() - start) * 1000
+        if ms > 20:
+            gplog.log(f'bin preSelect slow: {ms:.0f} ms')
     except Exception:
         gplog.logExc('bin preSelect')
+
+
+def _plateLabelOf(entity):
+    """Label of the plate / cabinet / bin a body belongs to (fast lookup)."""
+    if _plateBodies is None:
+        return binFeature.plateLabelOfBody(entity, _plateChoices)
+    cf = _plateBodies.feature(entity)
+    if cf is None:
+        return None
+    try:
+        return _plateLabels.get(cf.entityToken)
+    except Exception:
+        return None
 
 
 def _showPlateName(inputs):
@@ -1119,7 +1150,7 @@ def _takePlateSelection(inputs):
     sel = adsk.core.SelectionCommandInput.cast(inputs.itemById(GRID_PLATE_SELECT))
     if sel is None or sel.selectionCount == 0:
         return
-    label = binFeature.plateLabelOfBody(sel.selection(0).entity, _plateChoices)
+    label = _plateLabelOf(sel.selection(0).entity)
     sel.clearSelection()
     if label is None:
         return

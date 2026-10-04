@@ -15,10 +15,12 @@ Double-click the timeline node to edit.
 import adsk.core, adsk.fusion, traceback
 import json
 import os
+import time
 
 from ...lib import fusion360utils as futil
 from ... import config
 from ...lib.gridfinityUtils import boxSystemFeature as box
+from ...lib.gridfinityUtils import binFeature
 from ...lib.gridfinityUtils import cabinetLayout as L
 from ...lib.gridfinityUtils import cabinetGeometry
 from ...lib.gridfinityUtils import gplog
@@ -56,6 +58,8 @@ PARAM_IDS = list(L.INSERT_DEFAULTS.keys())
 local_handlers = []
 _previewGraphics = PreviewGraphics()
 _cabinet_cf = None      # the picked cabinet (custom feature)
+_cabinetBodies = None   # BodyIndex of all cabinet bodies (preSelect)
+_previewCache = {}      # insert ghost bodies by (cabinet, insert params, slot)
 IN_CABINET_NAME = 'cabinetName'
 _editedFeature = None
 _hiddenBodies = []
@@ -157,6 +161,10 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
         preselected = _selected(box.CABINET)
 
     cabinets = box.listCabinets(des)
+    global _cabinetBodies
+    with gplog.timed('drawer dialog: body index'):
+        _cabinetBodies = binFeature.BodyIndex([cf for _, _, cf in cabinets])
+    _previewCache.clear()
     if not cabinets:
         ui.messageBox('Create a Gridfinity Cabinet first.', CMD_NAME)
         return
@@ -336,7 +344,7 @@ def _takeSelection(inputs) -> bool:
     sel = adsk.core.SelectionCommandInput.cast(inputs.itemById(IN_CABINET))
     if sel is None or sel.selectionCount == 0:
         return False
-    cf = box.CABINET.fromSelection(sel.selection(0).entity)
+    cf = _cabinetOf(sel.selection(0).entity)
     sel.clearSelection()
     if cf is None:
         return False
@@ -356,9 +364,19 @@ def command_pre_select(args: adsk.core.SelectionEventArgs):
     try:
         if args.activeInput is None or args.activeInput.id != IN_CABINET:
             return
-        args.isSelectable = box.CABINET.fromSelection(args.selection.entity) is not None
+        start = time.perf_counter()
+        args.isSelectable = _cabinetOf(args.selection.entity) is not None
+        ms = (time.perf_counter() - start) * 1000
+        if ms > 20:
+            gplog.log(f'drawer preSelect slow: {ms:.0f} ms')
     except Exception:
         gplog.logExc('drawer preSelect')
+
+
+def _cabinetOf(entity):
+    if _cabinetBodies is None:
+        return box.CABINET.fromSelection(entity)
+    return _cabinetBodies.feature(entity)
 
 
 def _cabinet(inputs):
@@ -575,9 +593,18 @@ def command_preview(args: adsk.core.CommandEventArgs):
         if cab is None:
             return
         p = _params(inputs)
-        bodies = [cabinetGeometry.buildInsert(des, cp, dict(p, column=c, row=r))
-                  for c, r in _slots(inputs, cab, p)]
         tmgr = adsk.fusion.TemporaryBRepManager.get()
+        bodies = []
+        for c, r in _slots(inputs, cab, p):
+            # One click fires the preview twice (click + cabinet selection),
+            # and picked slots rebuild every drawer: reuse what is built.
+            key = json.dumps([cp, p, c, r], sort_keys=True, default=str)
+            body = _previewCache.get(key)
+            if body is None:
+                if len(_previewCache) > 64:
+                    _previewCache.clear()
+                body = _previewCache[key] = cabinetGeometry.buildInsert(des, cp, dict(p, column=c, row=r))
+            bodies.append(tmgr.copy(body))
         ghost = bodies[0]
         for b in bodies[1:]:
             tmgr.booleanOperation(ghost, b, adsk.fusion.BooleanTypes.UnionBooleanType)
