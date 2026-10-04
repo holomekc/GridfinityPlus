@@ -34,8 +34,8 @@ editable after the fact.
 
 ### Bins
 
-- **Snap to a baseplate.** Pick the plate, then click a cell in the viewport. Ctrl + click rotates by 90°. Column and
-  row can also be typed in.
+- **Snap to a baseplate.** Click a cell in the viewport: the plate (or cabinet top) under the cursor is picked
+  automatically. Ctrl + click rotates by 90°. Plate, column and row can also be set in the dialog.
 - **Fill to edge.** Per bin side: *Auto* / *Yes* / *No*. With *Auto*, a bin sitting at the plate edge grows over the
   plate's border or partial cell. Over a partial cell it also gets a matching cut foot, so it seats in the cut pocket.
 - **Height in units or in mm** (`Height by`). Units are whole Gridfinity height units (7 mm by default); *Total
@@ -59,7 +59,8 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 
 - Width / depth in grid units, height in height units or total mm.
 - Optional Gridfinity feet (magnet / screw holes): snaps onto a baseplate like a bin.
-- Optional Gridfinity grid on top: bins and further cabinets snap onto it, so cabinets stack into a wall.
+- Optional Gridfinity grid on top: bins and further cabinets snap onto it, so cabinets stack into a wall. To stack,
+  just click the top of an existing cabinet while placing a new one.
 - Columns (vertical dividers) and rows (equal, or weighted like `1,1,2`).
 - Guides: **ledges** (inserts rest on shelf strips) or **grooves** (V-grooves, inserts carry runners; an insert can
   span several rows).
@@ -98,7 +99,8 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
   against the finished drawer (handle, guides, walls) and the dialog says which one does not fit. The preview always
   shows the spools; *Show spools in model* also adds them as a separate body for planning (not for printing).
 - Pull-out stop (with the cabinet's detent) and *Show pulled out* for viewing.
-- Pick the slot by clicking the cabinet front, or fill a whole column or the whole cabinet in one go.
+- Click a cabinet's front: that picks the cabinet (like selecting a body) and the slot in one go. Or fill a whole
+  column or the whole cabinet at once.
 
 All overhangs are 45° (ledges, grooves, runners, handle undersides, teardrop knob). Print cabinets upright or on their
 back, inserts bottom down.

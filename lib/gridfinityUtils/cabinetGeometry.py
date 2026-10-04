@@ -352,6 +352,8 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
 
         # Front: label band + handle band, wire outlets.
         labelRect, band, blocked = frontLayout(ip, fx0, fx1, fz0, fz1)
+        gplog.log(f'insert front: handle={ip["handle"]} label={ip["label"]} pos={ip.get("labelPos")} '
+                  f'front z {fz0:.2f}..{fz1:.2f} -> label {labelRect and [round(v, 2) for v in labelRect]}')
         adds, cuts = [], []
         handleX = _handle(ip, band, (fx0, fx1, fz0, fz1), yF, yB, z0, z1, tw, adds, cuts)
         _label(ip, labelRect, yF, adds, cuts)
@@ -458,11 +460,12 @@ def frontLayout(ip, fx0, fx1, fz0, fz1):
         else:
             pos = L.LABEL_BOTTOM if stacked else L.LABEL_LEFT
     row, col = L.LABEL_GRID[pos]
-    if hasHandle and notch and row == 'top':
+    # An explicit position is kept; it only moves where the handle would cut
+    # right through the label.
+    if notch and row == 'top' and col == 'center':
         row = 'bottom'                            # the notch is cut from the top
-    if ip['handle'] == L.HANDLE_KNOB and row != 'middle':
-        row = 'middle'                            # the knob's stand reaches the bottom
-        col = 'left' if col == 'center' else col
+    if ip['handle'] == L.HANDLE_KNOB and row == 'bottom' and col == 'center':
+        row, col = 'middle', 'left'               # the knob's stand reaches the bottom
 
     def alignX(lw, a, b):
         """x0 of a label lw wide in [a, b] for the column."""
@@ -499,7 +502,11 @@ def frontLayout(ip, fx0, fx1, fz0, fz1):
         if b - a < 0.6:
             return None, band, []
         lw = min(float(ip['labelWidth']), b - a)
-        lz0 = fz0 + m if notch else zc - lh / 2
+        lz0 = zc - lh / 2
+        if notch and col == 'center':
+            # Centred under the notch: stay below it.
+            notchBottom = fz1 - min(float(ip['handleHeight']), H - 0.4)
+            lz0 = max(fz0 + m, min(lz0, notchBottom - 0.1 - frame - lh))
         x0 = alignX(lw, a, b)
         rect = (x0, x0 + lw, lz0, lz0 + lh)
         blocked = True

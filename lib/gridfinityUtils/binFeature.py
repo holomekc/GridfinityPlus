@@ -149,6 +149,51 @@ def listPlates(des: adsk.fusion.Design):
     return result
 
 
+def plateAtClick(des: adsk.fusion.Design, args, choices: dict):
+    """The baseplate / cabinet top under the cursor: (label, occ, grid,
+    (x, y) local hit) for the front-most grid whose top plane the view ray
+    hits inside its outline, or None. choices: {label: (token, grid)}.
+    Clicking a cabinet's top therefore stacks onto that cabinet."""
+    from . import viewRay
+    best = None
+    for label, (token, _) in choices.items():
+        if not token:
+            continue
+        try:
+            occ, grid, _ = resolvePlate(des, token)
+            if grid is None:
+                continue
+            hit = viewRay.hitLocalPlaneT(args, gridRegistry.gridTransform(grid, occ), 2, 0.0)
+            if hit is None:
+                continue
+            (x, y, _), t = hit
+            pad, part = grid.padding or {}, grid.partial or {}
+            side = lambda k: float(pad.get(k, 0) or 0) + float(part.get(k, 0) or 0)
+            m = 0.05
+            x0 = grid.originX - side('left') - m
+            x1 = grid.originX + grid.cols * grid.pitchX + side('right') + m
+            y0 = grid.originY - side('bottom') - m
+            y1 = grid.originY + grid.rows * grid.pitchY + side('top') + m
+            if not (x0 <= x <= x1 and y0 <= y <= y1):
+                continue
+            if best is None or t < best[0]:
+                best = (t, label, occ, grid, (x, y))
+        except Exception:
+            gplog.logExc(f'plateAtClick "{label}"')
+    return best[1:] if best else None
+
+
+def selectPlate(dropdown, label) -> bool:
+    """Select `label` in a plate dropdown. True if the selection changed."""
+    if dropdown is None or (dropdown.selectedItem and dropdown.selectedItem.name == label):
+        return False
+    for item in dropdown.listItems:
+        if item.name == label:
+            item.isSelected = True
+            return True
+    return False
+
+
 def matchPlateToken(des: adsk.fusion.Design, storedToken, plates):
     """Map a bin's stored plateToken onto one of listPlates() tokens.
 

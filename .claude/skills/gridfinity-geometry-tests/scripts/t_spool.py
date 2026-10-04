@@ -65,8 +65,21 @@ front, back = spc['yA'] - spc['D'] / 2 - py0, py1 - spc['yA'] - spc['D'] / 2
 bottom, top = spc['zA'] - spc['D'] / 2 - spc['floorZ'], (insc['z1'] - 0.1) - spc['zA'] - spc['D'] / 2
 print('play front/back', round(front * 10, 1), round(back * 10, 1), 'floor/top', round(bottom * 10, 1), round(top * 10, 1))
 assert abs(front - back) < 1e-6 and abs(bottom - top) < 1e-6
-# with guides at least 10 mm in front
-assert sp['yA'] - sp['D'] / 2 - (ins['y0'] + float(ip['front'])) >= L.GUIDE_SPACE - 1e-9
+# with guides: the eyelet post fits between the front and the spool at its height
+import math
+pyF = ins['y0'] + float(ip['front'])
+postTop = sp['holeZ'] + sp['wireD'] / 2 + 0.3
+r = sp['D'] / 2
+dz = sp['zA'] - min(postTop, sp['zA'])
+spoolAt = sp['yA'] - (math.sqrt(r * r - dz * dz) if dz < r else 0.0)
+gy = sp['guideY']
+assert gy - L.EYELET_DEPTH / 2 - pyF >= 0.1 - 1e-9, 'eyelet touches the front'
+assert spoolAt - (gy + L.EYELET_DEPTH / 2) >= 0.1 - 1e-9, 'eyelet touches the spool'
+# 90 mm spool, low eyelets: no extra depth needed (round spool is far back down there)
+c90 = L.cabinet(dict(L.CABINET_DEFAULTS, unitsW=3, unitsL=3, rows=1, heightUnits=20))
+low = L.insert(c90, dict(L.INSERT_DEFAULTS, interior=L.INTERIOR_SPOOLS, spoolDiameter=9.0, spoolGuides=True,
+                         spoolHolePos=L.HOLE_BOTTOM, depth=9.9, column=1, row=1))
+assert not low['spools']['errors'], low['spools']['errors']
 # too big spool / too many spools are reported
 big = L.insert(cab, dict(ip, spoolDiameter=9.0))
 many = L.insert(cab, dict(ip, spoolCount=6))

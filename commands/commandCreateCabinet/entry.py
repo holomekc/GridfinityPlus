@@ -153,9 +153,10 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     plateDd = g.addDropDownCommandInput(IN_PLATE, 'Baseplate', adsk.core.DropDownStyles.TextListDropDownStyle)
     plateDd.tooltip = 'Baseplate or cabinet top to snap onto'
     _plateChoices = {PLATE_NONE: (None, None)}
-    # Never offer the edited cabinet's own top as its baseplate.
-    plates = [pl for pl in binFeature.listPlates(des)
-              if _editedFeature is None or pl[2].entity != _editedFeature]
+    # Never offer the edited cabinet's own top as its baseplate, nor a
+    # cabinet stacked on it (that would stack it on itself).
+    blocked = [] if _editedFeature is None else [_editedFeature] + box.cabinetsAbove(des, _editedFeature)
+    plates = [pl for pl in binFeature.listPlates(des) if pl[2].entity not in blocked]
     selected = None
     if stored:
         selected = next((lbl for lbl, _, grid in plates
@@ -439,16 +440,25 @@ def command_mouse_click(args: adsk.core.MouseEventArgs):
         if args.keyboardModifiers & adsk.core.KeyboardModifiers.CtrlKeyboardModifier:
             _cycleRotation(inputs)
             return
-        p = _params(inputs)
-        if not p['plateToken']:
-            return
         des = adsk.fusion.Design.cast(app.activeProduct)
-        occ, grid, _ = binFeature.resolvePlate(des, p['plateToken'])
-        if grid is None:
-            return
-        hit = viewRay.hitLocalPlane(args, gridRegistry.gridTransform(grid, occ), 2, 0.0)
-        if hit is None:
-            return
+        # Whatever grid is under the cursor: a baseplate or a cabinet top
+        # (stacking). Switches the Baseplate dropdown if needed.
+        pick = binFeature.plateAtClick(des, args, _plateChoices)
+        if pick is not None:
+            label, occ, grid, hit = pick
+            if binFeature.selectPlate(inputs.itemById(IN_PLATE), label):
+                gplog.log(f'cabinet mouseClick: switched to "{label}"')
+            p = _params(inputs)
+        else:
+            p = _params(inputs)
+            if not p['plateToken']:
+                return
+            occ, grid, _ = binFeature.resolvePlate(des, p['plateToken'])
+            if grid is None:
+                return
+            hit = viewRay.hitLocalPlane(args, gridRegistry.gridTransform(grid, occ), 2, 0.0)
+            if hit is None:
+                return
         p['col'] = int((hit[0] - grid.originX) // grid.pitchX)
         p['row'] = int((hit[1] - grid.originY) // grid.pitchY)
         col, row = binFeature.clampCell(grid, box.binPlacementParams(p))

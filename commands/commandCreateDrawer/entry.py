@@ -52,7 +52,8 @@ PARAM_IDS = list(L.INSERT_DEFAULTS.keys())
 
 local_handlers = []
 _previewGraphics = PreviewGraphics()
-_cabinetChoices = {}    # label -> customFeature
+_cabinet_cf = None      # the picked cabinet (custom feature)
+IN_CABINET_NAME = 'cabinetName'
 _editedFeature = None
 _hiddenBodies = []
 _lastParams = dict(L.INSERT_DEFAULTS)
@@ -81,6 +82,9 @@ def stop():
     cmd_def = ui.commandDefinitions.itemById(CMD_ID)
     if cmd_def:
         cmd_def.deleteMe()
+
+
+_lastClick = None      # view ray of the last click (slot picking)
 
 
 def _selected(kind):
@@ -122,7 +126,9 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
 
 def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
-    global _editedFeature, _cabinetChoices
+    global _editedFeature, _cabinet_cf, _lastClick
+    _lastClick = None
+    _cabinet_cf = None
     args.command.setDialogInitialSize(380, 560)
     des = adsk.fusion.Design.cast(app.activeProduct)
     units = app.activeProduct.unitsManager.defaultLengthUnits
@@ -149,14 +155,16 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
 
     # --- slot
     g = inputs.addGroupCommandInput('slotGroup', 'Slot').children
-    cabDd = g.addDropDownCommandInput(IN_CABINET, 'Cabinet', adsk.core.DropDownStyles.TextListDropDownStyle)
-    _cabinetChoices = {}
-    selectedLabel = next((lbl for lbl, _, cf in cabinets if preselected is not None and cf == preselected),
-                         cabinets[-1][0])
-    for label, token, cf in cabinets:
-        _cabinetChoices[label] = cf
-        cabDd.listItems.add(label, label == selectedLabel)
-    cabDd.isEnabled = _editedFeature is None
+    # Pick the cabinet like a body: click it in the viewport (only cabinet
+    # bodies are selectable). Clicking its front also picks the slot. The
+    # selection is only used to find the cabinet and then cleared again, so
+    # the cabinet does not stay highlighted over the drawer preview.
+    cabSel = g.addSelectionInput(IN_CABINET, 'Pick', 'Click a cabinet (its front picks the slot)')
+    cabSel.addSelectionFilter('SolidBodies')
+    cabSel.setSelectionLimits(0, 1)
+    _cabinet_cf = preselected if preselected is not None else (cabinets[-1][2] if len(cabinets) == 1 else None)
+    cabSel.isVisible = _editedFeature is None
+    g.addTextBoxCommandInput(IN_CABINET_NAME, 'Cabinet', _cabinetLabel(), 1, True)
     form.integer(g, 'column', 'Column', p, 1, 99)
     form.integer(g, 'row', 'Row (from bottom)', p, 1, 99)
     form.integer(g, 'span', 'Rows high', p, 1, 99, 'Grooved cabinets: one insert can span several rows')
@@ -298,12 +306,48 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     futil.add_handler(args.command.validateInputs, command_validate, local_handlers=local_handlers)
     futil.add_handler(args.command.destroy, command_destroy, local_handlers=local_handlers)
     futil.add_handler(args.command.mouseClick, command_mouse_click, local_handlers=local_handlers)
+    futil.add_handler(args.command.preSelect, command_pre_select, local_handlers=local_handlers)
+
+
+def _cabinetLabel() -> str:
+    return _cabinet_cf.name if _cabinet_cf is not None else '(click a cabinet)'
+
+
+def _takeSelection(inputs) -> bool:
+    """A cabinet body was clicked: remember the cabinet, clear the selection
+    (no blue highlight). True if a cabinet was taken."""
+    global _cabinet_cf
+    sel = adsk.core.SelectionCommandInput.cast(inputs.itemById(IN_CABINET))
+    if sel is None or sel.selectionCount == 0:
+        return False
+    cf = box.CABINET.fromSelection(sel.selection(0).entity)
+    sel.clearSelection()
+    if cf is None:
+        return False
+    _cabinet_cf = cf
+    box_ = adsk.core.TextBoxCommandInput.cast(inputs.itemById(IN_CABINET_NAME))
+    if box_ is not None:
+        box_.text = _cabinetLabel()
+    return True
+
+
+def command_pre_select(args: adsk.core.SelectionEventArgs):
+    """Only cabinet bodies can be picked as the cabinet."""
+    try:
+        if args.activeInput is None or args.activeInput.id != IN_CABINET:
+            return
+        args.isSelectable = box.CABINET.fromSelection(args.selection.entity) is not None
+    except Exception:
+        gplog.logExc('drawer preSelect')
 
 
 def _cabinet(inputs):
     """(customFeature, params, layout) of the selected cabinet."""
-    cf = _cabinetChoices.get(form.readOne(inputs.itemById(IN_CABINET)))
-    if cf is None:
+    cf = _cabinet_cf
+    try:
+        if cf is None or not cf.isValid:
+            return None, None, None
+    except Exception:
         return None, None, None
     cp = box.CABINET.readParams(cf)
     return cf, cp, L.cabinet(cp)
@@ -467,6 +511,11 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     inputs = args.firingEvent.sender.commandInputs
     if form.isResultInput(IN_RESULT, args.input.id):
         return  # our own read-only result lines
+    if args.input.id == IN_CABINET:
+        if not _takeSelection(inputs):
+            return  # our own clearSelection, or not a cabinet
+        # The click that picked the cabinet also picks the slot on its front.
+        _slotFromClick(inputs)
     if args.input.id in (IN_CABINET, 'column', 'row', 'span'):
         _onCabinetChanged(inputs)
     if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles', 'spoolCount', 'ledgeHeight', 'axleSplit'):
@@ -534,28 +583,37 @@ def command_execute(args: adsk.core.CommandEventArgs):
 
 
 def command_mouse_click(args: adsk.core.MouseEventArgs):
-    """Click on the cabinet front -> column/row under the cursor."""
+    """Click on the cabinet front -> column/row under the cursor. When the
+    click also selects another cabinet, inputChanged repeats this for it."""
+    global _lastClick
     try:
-        inputs = args.firingEvent.sender.commandInputs
-        des = adsk.fusion.Design.cast(app.activeProduct)
-        cf, cp, cab = _cabinet(inputs)
-        if cab is None:
-            return
-        hit = viewRay.hitLocalPlane(args, box.insertMatrix(des, cp, world=True), 1, cab['front'])
-        if hit is None:
-            return
-        x, _, z = hit
-        cols = cab['columns']
-        half = cab['divider'] / 2
-        col = next((i for i, (x0, x1) in enumerate(cols) if x0 - half <= x <= x1 + half), None)
-        row = max((i for i, r in enumerate(cab['rows']) if r['bottom'] <= z + 1e-6), default=None)
-        if col is None or row is None or z > cab['zTop']:
-            return
-        inputs.itemById('column').value = col + 1
-        inputs.itemById('row').value = row + 1
-        _updateInfo(inputs)
+        _lastClick = viewRay.clickRay(args)
+        _slotFromClick(args.firingEvent.sender.commandInputs)
     except Exception:
         gplog.logExc('insert mouseClick')
+
+
+def _slotFromClick(inputs):
+    """Column / row under the last click on the selected cabinet's front."""
+    if _lastClick is None:
+        return
+    des = adsk.fusion.Design.cast(app.activeProduct)
+    cf, cp, cab = _cabinet(inputs)
+    if cab is None:
+        return
+    hit = viewRay.hitRayPlane(_lastClick, box.insertMatrix(des, cp, world=True), 1, cab['front'])
+    if hit is None:
+        return
+    x, _, z = hit
+    cols = cab['columns']
+    half = cab['divider'] / 2
+    col = next((i for i, (x0, x1) in enumerate(cols) if x0 - half <= x <= x1 + half), None)
+    row = max((i for i, r in enumerate(cab['rows']) if r['bottom'] <= z + 1e-6), default=None)
+    if col is None or row is None or z > cab['zTop']:
+        return
+    inputs.itemById('column').value = col + 1
+    inputs.itemById('row').value = row + 1
+    _updateInfo(inputs)
 
 
 def command_destroy(args: adsk.core.CommandEventArgs):

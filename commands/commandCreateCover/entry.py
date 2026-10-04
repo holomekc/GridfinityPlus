@@ -273,18 +273,25 @@ def command_mouse_click(args: adsk.core.MouseEventArgs):
         if args.keyboardModifiers & adsk.core.KeyboardModifiers.CtrlKeyboardModifier:
             _cycleRotation(inputs)
             return
-        p = _params(inputs)
-        if not p['plateToken']:
-            gplog.log('cover mouseClick: ignored, no baseplate selected')
-            return
         des = adsk.fusion.Design.cast(app.activeProduct)
-        occ, grid, _ = binFeature.resolvePlate(des, p['plateToken'])
-        if grid is None:
-            gplog.log('cover mouseClick: ignored, baseplate not found')
-            return
-        hit = viewRay.hitLocalPlane(args, gridRegistry.gridTransform(grid, occ), 2, 0.0)
-        if hit is None:
-            return
+        # Whatever grid is under the cursor: a baseplate or a cabinet top
+        # (stacking). Switches the Baseplate dropdown if needed.
+        pick = binFeature.plateAtClick(des, args, _plateChoices)
+        if pick is not None:
+            label, occ, grid, hit = pick
+            if binFeature.selectPlate(inputs.itemById(IN_PLATE), label):
+                gplog.log(f'cover mouseClick: switched to "{label}"')
+            p = _params(inputs)
+        else:
+            p = _params(inputs)
+            if not p['plateToken']:
+                return
+            occ, grid, _ = binFeature.resolvePlate(des, p['plateToken'])
+            if grid is None:
+                return
+            hit = viewRay.hitLocalPlane(args, gridRegistry.gridTransform(grid, occ), 2, 0.0)
+            if hit is None:
+                return
         p['col'] = int((hit[0] - grid.originX) // grid.pitchX)
         p['row'] = int((hit[1] - grid.originY) // grid.pitchY)
         col, row = binFeature.clampCell(grid, box.binPlacementParams(p))

@@ -354,6 +354,21 @@ def refersTo(des: adsk.fusion.Design, token, entity) -> bool:
         return False
 
 
+def cabinetsAbove(des: adsk.fusion.Design, cf):
+    """All cabinets stacked (directly or further up) on cabinet `cf`."""
+    above, frontier = [], [cf]
+    cabinets = [(other, CABINET.readParams(other)) for other in CABINET.all(des)]
+    while frontier:
+        below = frontier.pop()
+        for other, op in cabinets:
+            if other in above or other == cf or not op:
+                continue
+            if refersTo(des, op.get('plateToken'), below):
+                above.append(other)
+                frontier.append(other)
+    return above
+
+
 def resolveCabinet(des: adsk.fusion.Design, token):
     if not token:
         return None

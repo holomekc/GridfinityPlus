@@ -614,8 +614,10 @@ SPOOL_COLLAR_GAP = 0.05
 SPOOL_BOTTOM_GAP = 0.2
 SPOOL_BACK_GAP = 0.2
 SPOOL_AXLE_PLAY = 0.08
-# Free depth in front of the spools for the wire eyelets.
-GUIDE_SPACE = 1.0
+# Wire eyelet post: depth, gap to the front wall and to the spool.
+EYELET_DEPTH = 0.3
+EYELET_GAP = 0.2
+EYELET_ROOM = EYELET_GAP + EYELET_DEPTH + 0.1     # inner front -> spool at the post
 # Axle in its cradles: laid in an open U, or clicked past two lips.
 MOUNT_OPEN = 'Open'
 MOUNT_SNAP = 'Snap-in'
@@ -640,9 +642,10 @@ def spoolLayout(ins: dict) -> dict:
     cradle posts, spool centres, wire hole / guide positions, errors.
 
     Spools hang on one axle across the drawer, centred in depth and height
-    (same play all around). With wire guides at least GUIDE_SPACE stays free
-    in front of the spools for the eyelets; the wire runs forward close to
-    the floor through the eyelet to a hole in the front.
+    (same play all around). With wire guides the eyelet posts stand in front
+    of the spools: only as much depth as they need at their height (low
+    eyelets fit under the round spool for free); the wire runs forward
+    through the eyelet to a hole in the front.
     """
     ip = ins['p']
     tw = float(ip['wall'])
@@ -679,15 +682,36 @@ def spoolLayout(ins: dict) -> dict:
     if axleD >= D - 0.4:
         errors.append('Spool bore must be smaller than the spool')
     guides = bool(ip['spoolGuides'])
-    frontSpace = GUIDE_SPACE if guides else SPOOL_BACK_GAP
-    # Centred in depth; with guides keep room for the eyelets in front.
-    yMin = py0 + frontSpace + D / 2
-    yMax = py1 - SPOOL_BACK_GAP - D / 2
+    # Wire outlet height (the eyelet follows), kept inside the front.
+    wr = wireD / 2
+    lo, hi = floorZ + max(0.5, wr + 0.25), ins['z1'] - wr - 0.4
+    pos = ip.get('spoolHolePos', HOLE_BOTTOM)
+    base = {HOLE_BOTTOM: lo, HOLE_MIDDLE: zA, HOLE_TOP: zA + D / 2}.get(pos, lo)
+    holeZ = min(max(base + float(ip.get('spoolHoleOffset') or 0.0), lo), hi)
+
+    r = D / 2
+    # Axle distance from the inner front: the spool keeps SPOOL_BACK_GAP to
+    # the front. An eyelet post (EYELET_DEPTH deep, up to just above the
+    # hole) has to fit in front of the spool at the post's height: low down
+    # the round spool is far back, so low eyelets need no extra depth.
+    frontReach = SPOOL_BACK_GAP + r
+    if guides:
+        postTop = holeZ + wr + 0.3
+        dz = zA - min(postTop, zA)
+        spoolAtPost = math.sqrt(max(0.0, r * r - dz * dz)) if dz < r else 0.0
+        frontReach = max(frontReach, EYELET_ROOM + spoolAtPost)
+    yMin = py0 + frontReach
+    yMax = py1 - SPOOL_BACK_GAP - r
+    # Centred in depth.
     yA = min(max((py0 + py1) / 2, yMin), yMax)
-    spoolFront = yA - D / 2
     if yMin > yMax + 1e-9:
-        errors.append('Drawer too short for this spool: needs {:.0f} mm inside depth'.format(
-            (D + SPOOL_BACK_GAP + frontSpace) * 10))
+        errors.append('Drawer too short for this spool: needs {:.1f} mm inside depth, has {:.1f} mm'.format(
+            (frontReach + r + SPOOL_BACK_GAP) * 10, (py1 - py0) * 10))
+    # Eyelet halfway between the front and the spool at the post's height.
+    if guides:
+        guideY = max(py0 + EYELET_GAP + EYELET_DEPTH / 2, (py0 + yA - spoolAtPost) / 2)
+    else:
+        guideY = py0 + EYELET_GAP + EYELET_DEPTH / 2
 
     # Posts: end support, (spool, divider)*, spool, end support.
     x = (px0 + px1) / 2 - span / 2
@@ -700,18 +724,12 @@ def spoolLayout(ins: dict) -> dict:
         posts.append((x, x + thick))
         x += thick
 
-    # Wire outlet height (the eyelet follows), kept inside the front.
-    wr = wireD / 2
-    lo, hi = floorZ + max(0.5, wr + 0.25), ins['z1'] - wr - 0.4
-    pos = ip.get('spoolHolePos', HOLE_BOTTOM)
-    base = {HOLE_BOTTOM: lo, HOLE_MIDDLE: zA, HOLE_TOP: zA + D / 2}.get(pos, lo)
-    holeZ = min(max(base + float(ip.get('spoolHoleOffset') or 0.0), lo), hi)
     return {
         'n': n, 'D': D, 'Ws': Ws, 'axleD': axleD, 'wireD': wireD,
         'zA': zA, 'yA': yA, 'floorZ': floorZ,
         'posts': posts, 'centers': centers, 'play': play,
         'snap': ip.get('spoolMount') == MOUNT_SNAP,
-        'holeZ': holeZ, 'guideY': (py0 + spoolFront) / 2,
+        'holeZ': holeZ, 'guideY': guideY,
         'axleX': (posts[0][0] - collar - endPlay, posts[-1][1] + collar + endPlay),
         'endPlay': endPlay,
         'fillet': max(0.0, float(ip.get('spoolFillet') or 0.0)),

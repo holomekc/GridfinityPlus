@@ -1051,11 +1051,24 @@ def command_mouse_click(args: adsk.core.MouseEventArgs):
         if args.keyboardModifiers & adsk.core.KeyboardModifiers.CtrlKeyboardModifier:
             _cycleRotation(inputs)
             return
+        des = adsk.fusion.Design.cast(app.activeProduct)
+        # Whatever grid is under the cursor: a baseplate or a cabinet top.
+        pick = binFeature.plateAtClick(des, args, _plateChoices)
+        if pick is not None:
+            label, occ, grid, hit = pick
+            if binFeature.selectPlate(inputs.itemById(GRID_PLATE_DROPDOWN), label):
+                gplog.log(f'bin mouseClick: switched to "{label}"')
+            params = _placementParams(inputs)
+            params['col'] = int((hit[0] - grid.originX) // grid.pitchX)
+            params['row'] = int((hit[1] - grid.originY) // grid.pitchY)
+            col, row = binFeature.clampCell(grid, params)
+            inputs.itemById(GRID_COL_INPUT).value = col + 1
+            inputs.itemById(GRID_ROW_INPUT).value = row + 1
+            return
         params = _placementParams(inputs)
         if not params['plateToken']:
             gplog.log('bin mouseClick: ignored, no baseplate selected in the dialog')
             return
-        des = adsk.fusion.Design.cast(app.activeProduct)
         occ, grid, comp = binFeature.resolvePlate(des, params['plateToken'])
         if grid is None:
             gplog.log('bin mouseClick: ignored, selected baseplate not found')

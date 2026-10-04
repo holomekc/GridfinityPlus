@@ -116,4 +116,14 @@ assert g[L.LABEL_LEFT][0] == g[L.LABEL_TOP_LEFT][0] and g[L.LABEL_RIGHT][1] == g
 # legacy names map onto the grid
 assert L.withDefaults({'labelPos': 'Below handle'}, L.INSERT_DEFAULTS)['labelPos'] == L.LABEL_BOTTOM
 assert L.withDefaults({'labelPos': 'Left'}, L.INSERT_DEFAULTS)['labelPos'] == L.LABEL_LEFT
+# explicit positions are kept, whatever the handle (only true collisions move)
+for h in L.HANDLE_TYPES:
+    for pos in (L.LABEL_LEFT, L.LABEL_CENTER, L.LABEL_RIGHT):
+        r, _, _ = G.frontLayout(dict(L.INSERT_DEFAULTS, handle=h, labelPos=pos), 0, 10, 0, 6)
+        assert r is not None and r[2] > 1.0 and r[3] < 5.0, (h, pos, r)     # middle row stays middle
+    r, _, _ = G.frontLayout(dict(L.INSERT_DEFAULTS, handle=h, labelPos=L.LABEL_TOP_LEFT), 0, 10, 0, 6)
+    assert r[3] > 5.0, (h, 'top left', r)                                    # top stays top
+notchC, _, _ = G.frontLayout(dict(L.INSERT_DEFAULTS, handle=L.HANDLE_NOTCH, labelPos=L.LABEL_CENTER), 0, 10, 0, 6)
+nd = float(L.INSERT_DEFAULTS['handleHeight'])
+assert notchC[3] <= 6 - nd - 0.1 + 1e-9, ('center label under the notch', notchC)
 print('DONE fails', fails)

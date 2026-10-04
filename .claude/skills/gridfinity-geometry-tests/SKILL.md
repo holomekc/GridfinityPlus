@@ -31,6 +31,7 @@ Parametric pieces (Gridfinity foot, baseplate cell cutout) are replaced by simpl
 | `t_mount.py` | cabinet wall mount: every screw size and head type, head flush inside, back wall thickness, holes off dividers | 5 s |
 | `t_split.py` | baseplate split plan, one body per tile, dovetail gap equal along the flank | 2 s |
 | `t_platecorner.py` | baseplate outline: corners next to a partial cell stay square, clean ends rounded (final cut + preview) | 2 s |
+| `t_stackpick.py` | click picking: front-most baseplate / cabinet top under the cursor wins (stacking), outside every outline -> None | 1 s |
 | `test_geom.py` | cabinet/insert probes (walls, ledges, grooves, detent, handles, knobs, labels, wire holes, overhang, top grid) + collision scan cabinet vs. insert, closed and pulled out | ~2-3 min |
 | `t_dialogs.py` | builds the bin, cabinet, drawer and cover dialogs against fake inputs that reject non-ASCII / duplicate input ids (Fusion: "invalid argument id") | 3 s |
 | `t_bin2.py` | builds the bin dialog 3x in a row; each run must reach the handler attach line (~874, `add_handler` KeyError is the mock's limit, not a bug) | 2 s |
