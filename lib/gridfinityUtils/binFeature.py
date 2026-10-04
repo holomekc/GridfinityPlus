@@ -19,9 +19,11 @@ Full dialog state for edit-seeding lives in params['geom'] / params['compartment
 import adsk.core, adsk.fusion
 import json
 import math
+import types
 
 from . import gridRegistry
 from . import gplog
+from . import const
 
 FEATURE_ID = 'GridfinityPlus_bin'
 FEATURE_NAME = 'Gridfinity Bin'
@@ -112,7 +114,7 @@ def resolvePlate(des: adsk.fusion.Design, plateToken=None):
     if plateToken:
         try:
             for e in des.findEntityByToken(plateToken):
-                grid = gridRegistry.readGrid(e)
+                grid = readGridAny(des, e)
                 if grid:
                     comp = gridRegistry.ownerComponent(e)
                     occs = des.rootComponent.allOccurrencesByComponent(comp)
@@ -127,11 +129,64 @@ def resolvePlate(des: adsk.fusion.Design, plateToken=None):
     return occ, grid, gridRegistry.ownerComponent(grid.entity)
 
 
-def listPlates(des: adsk.fusion.Design):
-    """[(label, componentToken, grid)] for all tagged baseplates."""
+def isBin(entity) -> bool:
+    cf = adsk.fusion.CustomFeature.cast(entity)
+    try:
+        return cf is not None and cf.definition.id == FEATURE_ID
+    except Exception:
+        return False
+
+
+def readGridAny(des, entity):
+    """Grid of a tagged plate / cabinet top, or of a bin with a stacking lip
+    (computed from its params, so every bin works, old ones too)."""
+    if isBin(entity):
+        params = readParams(adsk.fusion.CustomFeature.cast(entity))
+        return binGrid(des, entity, params) if params else None
+    return gridRegistry.readGrid(entity)
+
+
+_gridDepth = [0]
+
+
+def binGrid(des, cf, params: dict):
+    """GridInfo of a bin's lip (binW x binL cells, at the lip's top), or None
+    without a stacking lip."""
+    z = lipTopZ(params)
+    if z is None or _gridDepth[0] > 20:          # 20: stacked-on-itself guard
+        return None
+    _gridDepth[0] += 1
+    try:
+        matrix, _ = placementMatrix(des, params, world=False)
+    finally:
+        _gridDepth[0] -= 1
+    top = adsk.core.Matrix3D.create()
+    top.translation = adsk.core.Vector3D.create(0, 0, z)
+    top.transformBy(matrix)
+    return gridRegistry.GridInfo({
+        'pitchX': float(params['baseW']), 'pitchY': float(params['baseL']),
+        'cols': int(params['binW']), 'rows': int(params['binL']),
+        'xyClearance': float(params['cl']),
+        'placement': [float(v) for v in top.asArray()],
+    }, cf)
+
+
+def listPlates(des: adsk.fusion.Design, includeBins: bool = False):
+    """[(label, componentToken, grid)] for all tagged baseplates (and cabinet
+    tops). includeBins: also bins with a stacking lip (bins stack on bins)."""
     result = []
     seen = set()
-    for occ, grid in gridRegistry.findBaseplates(des):
+    entries = [grid for _, grid in gridRegistry.findBaseplates(des) if not isBin(grid.entity)]
+    if includeBins:
+        for cf, params in allBins(des):
+            try:
+                grid = binGrid(des, cf, params)
+            except Exception:
+                gplog.logExc('listPlates: bin grid')
+                grid = None
+            if grid is not None:
+                entries.append(grid)
+    for grid in entries:
         e = grid.entity
         try:
             token = e.entityToken
@@ -181,6 +236,41 @@ def plateAtClick(des: adsk.fusion.Design, args, choices: dict):
         except Exception:
             gplog.logExc(f'plateAtClick "{label}"')
     return best[1:] if best else None
+
+
+def featureOfBody(entity):
+    """The custom feature (plate, cabinet, bin, ...) whose body `entity` is
+    (a body or its proxy), else None."""
+    body = adsk.fusion.BRepBody.cast(entity)
+    if body is None:
+        return None
+    try:
+        native = body.nativeObject if body.nativeObject else body
+        feats = native.parentComponent.features.customFeatures
+        for i in range(feats.count):
+            cf = feats.item(i)
+            for f in cf.features:
+                bf = adsk.fusion.BaseFeature.cast(f)
+                if bf is None:
+                    continue
+                for b in bf.bodies:
+                    if b == native:
+                        return cf
+    except Exception:
+        gplog.logExc('featureOfBody')
+    return None
+
+
+def plateLabelOfBody(entity, choices: dict):
+    """Label in `choices` ({label: (token, grid)}) of the plate / cabinet /
+    bin the clicked body belongs to, else None."""
+    cf = featureOfBody(entity)
+    if cf is None:
+        return None
+    for label, (token, grid) in choices.items():
+        if grid is not None and grid.entity == cf:
+            return label
+    return None
 
 
 def selectPlate(dropdown, label) -> bool:
@@ -381,18 +471,21 @@ def createFeature(des: adsk.fusion.Design, placedBody, params: dict):
     customFeature = component.features.customFeatures.add(cfInput)
     customFeature.name = name
 
+    params = _withPlacement(des, params)
     customFeature.attributes.add(ATTR_GROUP, ATTR_PARAMS, json.dumps(params))
     gplog.dumpTimeline(des, 'bin create:after')
     return customFeature
 
 
 def rebuildFeature(des: adsk.fusion.Design, customFeature: adsk.fusion.CustomFeature,
-                   placedBody, params: dict):
-    """Swap in a new placed body via the pending + rev-bump compute pattern."""
+                   placedBody, params: dict, _visited=None):
+    """Swap in a new placed body via the pending + rev-bump compute pattern,
+    then move the bins stacked on it along."""
     name = featureName(params)
     gplog.session(f'bin rebuildFeature "{name}"')
 
     _pending[customFeature.entityToken] = {'body': placedBody, 'name': name}
+    params = _withPlacement(des, params)
     customFeature.attributes.add(ATTR_GROUP, ATTR_PARAMS, json.dumps(params))
     customFeature.name = name
 
@@ -410,6 +503,114 @@ def rebuildFeature(des: adsk.fusion.Design, customFeature: adsk.fusion.CustomFea
     except Exception:
         gplog.logExc('bin rebuild: rev bump failed (legacy feature?), relying on auto recompute')
     gplog.dumpTimeline(des, 'bin rebuild:after')
+    moveStacked(des, customFeature, _visited)
+
+
+# ----------------------------------------------------------------- stacking
+
+KEY_PLACED = 'placed'      # placement matrix (component space) of the body
+
+
+def _withPlacement(des, params: dict) -> dict:
+    matrix, _ = placementMatrix(des, params, world=False)
+    return dict(params, **{KEY_PLACED: [float(v) for v in matrix.asArray()]})
+
+
+def lipTopZ(params: dict):
+    """Local z where a bin stacked on this one sits (like a baseplate top):
+    top of the lip's foot cutout. None without a stacking lip."""
+    geom = params.get('geom') or {}
+
+    def value(key, default=None):
+        v = geom.get(key)
+        return v.get('value', default) if isinstance(v, dict) else (default if v is None else v)
+
+    if not value('with_lip', False) or value('bin_generate_body', True) is False:
+        return None
+    hu = float(params.get('heightUnit') or 0.7)
+    binH = float(params.get('binH') or 0)
+    bodyTop = (binH - 1) * hu + max(0.0, hu - const.BIN_BASE_HEIGHT)
+    return bodyTop + const.BIN_BASE_HEIGHT
+
+
+def _refersTo(des, token, entity) -> bool:
+    if not token or entity is None:
+        return False
+    try:
+        if token == entity.entityToken:
+            return True
+        return any(e == entity for e in des.findEntityByToken(token))
+    except Exception:
+        return False
+
+
+def allBins(des):
+    """[(customFeature, params)] of every bin in the design."""
+    result, seen = [], set()
+    for attr in des.findAttributes(ATTR_GROUP, ATTR_PARAMS):
+        cf = adsk.fusion.CustomFeature.cast(attr.parent)
+        if cf is None or not isBin(cf):
+            continue
+        try:
+            if not cf.isValid or cf.entityToken in seen:
+                continue
+            seen.add(cf.entityToken)
+        except Exception:
+            continue
+        params = readParams(cf)
+        if params:
+            result.append((cf, params))
+    return result
+
+
+def binsAbove(des, cf):
+    """All bins stacked (directly or further up) on `cf`."""
+    bins = allBins(des)
+    above, frontier = [], [cf]
+    while frontier:
+        below = frontier.pop()
+        for other, op in bins:
+            if other == cf or other in above:
+                continue
+            if _refersTo(des, op.get('plateToken'), below):
+                above.append(other)
+                frontier.append(other)
+    return above
+
+
+def moveStacked(des, baseEntity, _visited=None):
+    """Bins standing on `baseEntity` (bin or cabinet top): move their bodies
+    to the new placement. Bins created before the placement was stored are
+    left alone (edit them once to fix them)."""
+    visited = _visited if _visited is not None else set()
+    try:
+        visited.add(baseEntity.entityToken)
+    except Exception:
+        pass
+    tmgr = adsk.fusion.TemporaryBRepManager.get()
+    for cf, params in allBins(des):
+        try:
+            if cf.entityToken in visited or not _refersTo(des, params.get('plateToken'), baseEntity):
+                continue
+            old = params.get(KEY_PLACED)
+            if not old:
+                gplog.log(f'moveStacked: "{cf.name}" has no stored placement, skipped')
+                continue
+            newM, _ = placementMatrix(des, params, world=False)
+            if max(abs(a - b) for a, b in zip(old, newM.asArray())) < 1e-7:
+                continue
+            baseFeat = _findBaseFeature(cf)
+            if baseFeat is None or baseFeat.bodies.count == 0:
+                continue
+            delta = adsk.core.Matrix3D.create()
+            delta.setWithArray(list(old))
+            delta.invert()
+            delta.transformBy(newM)              # new * old^-1
+            body = tmgr.copy(baseFeat.bodies.item(0))
+            tmgr.transform(body, delta)
+            rebuildFeature(des, cf, body, params, visited)
+        except Exception:
+            gplog.logExc('moveStacked')
 
 
 def readParams(customFeature: adsk.fusion.CustomFeature):

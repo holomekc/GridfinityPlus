@@ -41,12 +41,15 @@ ICON_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resource
 IN_CABINET = 'cabinet'
 IN_FILL = 'fill'
 IN_RESULT = 'result'
-RESULT_KEYS = ('Outside', 'Inside', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
+RESULT_KEYS = ('Outside', 'Inside', 'Compartment', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
                'Spool play floor/top', 'Spool slot', 'Axle', 'Inserts')
 FILL_ONE = 'This slot'
 FILL_COLUMN = 'Whole column'
 FILL_ALL = 'All slots'
-FILL_MODES = (FILL_ONE, FILL_COLUMN, FILL_ALL)
+FILL_PICK = 'Picked slots'
+FILL_MODES = (FILL_ONE, FILL_PICK, FILL_COLUMN, FILL_ALL)
+_picked = []          # Picked slots: [(column, row)] 1-based, toggled by clicks
+_toggledClick = None  # the click that last toggled (one click = one toggle)
 
 PARAM_IDS = list(L.INSERT_DEFAULTS.keys())
 
@@ -57,6 +60,9 @@ IN_CABINET_NAME = 'cabinetName'
 _editedFeature = None
 _hiddenBodies = []
 _lastParams = dict(L.INSERT_DEFAULTS)
+
+# Copy / paste settings (contextEdit): pasted onto the next edit dialog.
+_pasteSeed = None
 
 
 def getErrorMessage(text='An unknown error occurred'):
@@ -126,7 +132,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
 
 def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
-    global _editedFeature, _cabinet_cf, _lastClick
+    global _editedFeature, _cabinet_cf, _lastClick, _pasteSeed, _picked, _toggledClick
+    _picked, _toggledClick = [], None
     _lastClick = None
     _cabinet_cf = None
     args.command.setDialogInitialSize(380, 560)
@@ -140,7 +147,8 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     if stored:
         gplog.session(f'INSERT dialog EDIT "{_editedFeature.name}"')
         args.command.okButtonText = 'Update drawer'
-        p = L.withDefaults(stored, L.INSERT_DEFAULTS)
+        p = L.withDefaults(dict(stored, **(_pasteSeed or {})), L.INSERT_DEFAULTS)
+        _pasteSeed = None
         preselected = box.resolveCabinet(des, stored.get('cabinetToken'))
     else:
         _editedFeature = None
@@ -170,7 +178,9 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.integer(g, 'span', 'Rows high', p, 1, 99, 'Grooved cabinets: one insert can span several rows')
     if _editedFeature is None:
         form.choice(g, IN_FILL, 'Fill', {IN_FILL: FILL_ONE}, FILL_MODES,
-                    'Create one insert per slot of the column / the whole cabinet')
+                    'This slot: one insert.\n'
+                    'Picked slots: click slots on the cabinet front to add / remove them.\n'
+                    'Whole column / All slots: one insert per slot.')
     g.addTextBoxCommandInput('slotHint', '', 'Click the cabinet front to pick a slot.', 1, True)
     form.length(g, 'pullOut', 'Show pulled out', p, units, minimum=0.0,
                 tooltip='Only moves the insert out of the cabinet for viewing')
@@ -211,6 +221,12 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'handleDepth', 'Depth', p, units, minimum=0.3,
                 tooltip='Recessed pull: how deep the pocket goes in. Others: how far it sticks out')
     form.choice(g, 'handleAlign', 'Position', p, L.HANDLE_ALIGNS)
+    form.choice(g, 'gripDividers', 'Dividers behind', p, L.GRIP_MODES,
+                'Compartments: dividers in the way of the notch / finger hole get the same round cut.\n'
+                'Front row: along the front row of compartments (up to the first cross divider).\n'
+                'Custom depth: this far behind the front. Off: dividers stay full height.')
+    form.length(g, 'gripDepth', 'Divider cut depth', p, units, minimum=0.2,
+                tooltip='How far behind the front the dividers are cut')
     form.length(g, 'pullGrip', 'Grip face height', p, units, minimum=0.1,
                 tooltip='Height of the vertical outer face (small = thin lip, large = bar)')
     form.length(g, 'pullBar', 'Grip thickness', p, units, minimum=0.08, maximum=1.0,
@@ -316,7 +332,7 @@ def _cabinetLabel() -> str:
 def _takeSelection(inputs) -> bool:
     """A cabinet body was clicked: remember the cabinet, clear the selection
     (no blue highlight). True if a cabinet was taken."""
-    global _cabinet_cf
+    global _cabinet_cf, _toggledClick
     sel = adsk.core.SelectionCommandInput.cast(inputs.itemById(IN_CABINET))
     if sel is None or sel.selectionCount == 0:
         return False
@@ -324,6 +340,10 @@ def _takeSelection(inputs) -> bool:
     sel.clearSelection()
     if cf is None:
         return False
+    if cf != _cabinet_cf:
+        # Picked slots belong to one cabinet; this click picks on the new one.
+        _picked.clear()
+        _toggledClick = None
     _cabinet_cf = cf
     box_ = adsk.core.TextBoxCommandInput.cast(inputs.itemById(IN_CABINET_NAME))
     if box_ is not None:
@@ -363,6 +383,8 @@ def _slots(inputs, cab, p):
     slot = L.clampInsert(cab, p)
     if mode == FILL_ONE:
         return [(slot['column'], slot['row'])]
+    if mode == FILL_PICK:
+        return list(_picked) or [(slot['column'], slot['row'])]
     cols = [slot['column']] if mode == FILL_COLUMN else range(1, len(cab['columns']) + 1)
     rows = range(1, len(cab['rows']) - slot['span'] + 2, slot['span'])
     return [(c, r) for c in cols for r in rows]
@@ -407,6 +429,9 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'knobSupport', kind == L.HANDLE_KNOB)
     form.setVisible(inputs, 'handleDepth', hasHandle and kind not in (L.HANDLE_SLOT, L.HANDLE_NOTCH, L.HANDLE_LEDGE))
     form.setVisible(inputs, 'pullGrip', kind == L.HANDLE_PULL)
+    grip = compartments and kind in (L.HANDLE_NOTCH, L.HANDLE_SLOT)
+    form.setVisible(inputs, 'gripDividers', grip)
+    form.setVisible(inputs, 'gripDepth', grip and p.get('gripDividers') == L.GRIP_DEPTH)
     for inputId in ('fingerGrooveWidth', 'fingerGrooveDepth', 'ledgeRim', 'ledgeHeight'):
         form.setVisible(inputs, inputId, kind == L.HANDLE_LEDGE)
     form.setVisible(inputs, 'handleAlign', kind in (L.HANDLE_PULL, L.HANDLE_LEDGE))
@@ -458,6 +483,13 @@ def _updateInfo(inputs):
             'Inside': '{} x {} x {} mm'.format(mm(innerW), mm(innerL), mm(innerH)),
         }
         problems = list(ins['errors'])
+        if (p['interior'] == L.INTERIOR_COMPARTMENTS and not ins['blank']
+                and (int(p['divX']) > 1 or int(p['divY']) > 1)):
+            # Same split as the geometry: equal compartments, walls in between.
+            cx, cy = max(1, int(p['divX'])), max(1, int(p['divY']))
+            uW = (innerW - (cx - 1) * tw) / cx
+            uL = (innerL - (cy - 1) * tw) / cy
+            values['Compartment'] = '{} x {} x {} mm ({} x {})'.format(mm(uW), mm(uL), mm(innerH), cx, cy)
         if p['interior'] == L.INTERIOR_GRID and not ins['blank']:
             nx, ny = L.gridCells(innerW, innerL, cp['baseW'], cp['baseL'], cp['cl'])
             if nx and ny:
@@ -482,8 +514,8 @@ def _updateInfo(inputs):
                 mm(ls['H']), mm(ls['p']), ls['angle'], note)
         sp = ins.get('spools')
         if sp is not None:
-            maxD = (ins['z1'] - 0.1) - sp['floorZ'] - L.SPOOL_BOTTOM_GAP
-            values['Spool max Ø'] = '{} mm'.format(mm(maxD))
+            values['Spool max Ø'] = '{} mm ({} mm inside height - {} mm under the spool)'.format(
+                mm(sp['maxD']), mm(innerH), mm(L.SPOOL_BOTTOM_GAP + L.SPOOL_TOP_GAP))
             if not sp['errors']:
                 frontIn = ins['y0'] + frontT
                 r = sp['D'] / 2
@@ -518,7 +550,7 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
         _slotFromClick(inputs)
     if args.input.id in (IN_CABINET, 'column', 'row', 'span'):
         _onCabinetChanged(inputs)
-    if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles', 'spoolCount', 'ledgeHeight', 'axleSplit'):
+    if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles', 'spoolCount', 'ledgeHeight', 'axleSplit', 'gripDividers'):
         _syncVisibility(inputs)
     _updateInfo(inputs)
 
@@ -613,7 +645,23 @@ def _slotFromClick(inputs):
         return
     inputs.itemById('column').value = col + 1
     inputs.itemById('row').value = row + 1
+    _togglePick(inputs, col + 1, row + 1)
     _updateInfo(inputs)
+
+
+def _togglePick(inputs, column, row):
+    """Picked slots: a click adds the slot or removes it again (each click
+    counts once, although mouseClick and the cabinet selection both report it)."""
+    global _toggledClick
+    fill = inputs.itemById(IN_FILL)
+    if fill is None or form.readOne(fill) != FILL_PICK or _toggledClick is _lastClick:
+        return
+    _toggledClick = _lastClick
+    if (column, row) in _picked:
+        _picked.remove((column, row))
+    else:
+        _picked.append((column, row))
+    gplog.log(f'drawer: picked slots {_picked}')
 
 
 def command_destroy(args: adsk.core.CommandEventArgs):

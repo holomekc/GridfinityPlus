@@ -34,8 +34,10 @@ editable after the fact.
 
 ### Bins
 
-- **Snap to a baseplate.** Click a cell in the viewport: the plate (or cabinet top) under the cursor is picked
-  automatically. Ctrl + click rotates by 90°. Plate, column and row can also be set in the dialog.
+- **Snap to a baseplate.** Click a cell in the viewport: the plate, cabinet top or bin under the cursor is picked
+  like a body, together with the cell. Ctrl + click rotates by 90°. Column and row can also be typed in.
+- **Stack bins.** Every bin with a stacking lip is a plate for further bins (older bins too): click its top to put
+  a bin on it. Bins on top move along when the bin (or cabinet) below is edited.
 - **Fill to edge.** Per bin side: *Auto* / *Yes* / *No*. With *Auto*, a bin sitting at the plate edge grows over the
   plate's border or partial cell. Over a partial cell it also gets a matching cut foot, so it seats in the cut pocket.
 - **Height in units or in mm** (`Height by`). Units are whole Gridfinity height units (7 mm by default); *Total
@@ -100,7 +102,7 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
   shows the spools; *Show spools in model* also adds them as a separate body for planning (not for printing).
 - Pull-out stop (with the cabinet's detent) and *Show pulled out* for viewing.
 - Click a cabinet's front: that picks the cabinet (like selecting a body) and the slot in one go. Or fill a whole
-  column or the whole cabinet at once.
+  column or the whole cabinet at once, or use *Picked slots*: every click on the front adds or removes a slot.
 
 All overhangs are 45° (ledges, grooves, runners, handle undersides, teardrop knob). Print cabinets upright or on their
 back, inserts bottom down.
@@ -109,6 +111,11 @@ back, inserts bottom down.
 cabinet. Size in cells, thickness above the plate, optional magnet / screw holes. Placed like a bin (click a cell,
 Ctrl+Click rotates) and fills to the plate edge over a border or partial cell. Default thickness 1 mm, so the bottom
 drawer of a cabinet still slides out over it.
+
+**Copy / paste settings**: right-click a bin, baseplate, cabinet, drawer or cover and choose *Copy Gridfinity+
+settings*. Then right-click another one of the same kind and choose *Paste Gridfinity+ settings*: its edit dialog
+opens with the copied values (the position stays), OK applies them. With several selected, the settings are applied
+to all of them at once (one undo step). New ones of that kind also start with the copied settings.
 
 **Editing in Part designs**: Fusion offers no *Edit Feature* / timeline double-click for add-in features in designs
 with design intent *Part*. Right-click the bin, plate, cabinet, drawer or cover (body or browser entry) and use

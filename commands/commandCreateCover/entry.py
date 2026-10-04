@@ -50,6 +50,9 @@ _editedFeature = None
 _hiddenBodies = []
 _lastParams = dict(C.COVER_DEFAULTS)
 
+# Copy / paste settings (contextEdit): pasted onto the next edit dialog.
+_pasteSeed = None
+
 
 def getErrorMessage(text='An unknown error occurred'):
     return f"{text}:<br>{traceback.format_exc()}"
@@ -116,7 +119,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
 
 def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
-    global _editedFeature, _plateChoices
+    global _editedFeature, _plateChoices, _pasteSeed
     args.command.setDialogInitialSize(340, 420)
     des = adsk.fusion.Design.cast(app.activeProduct)
     units = app.activeProduct.unitsManager.defaultLengthUnits
@@ -126,7 +129,8 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     if stored:
         gplog.session(f'COVER dialog EDIT "{_editedFeature.name}"')
         args.command.okButtonText = 'Update cover'
-        p = C.withDefaults(stored)
+        p = C.withDefaults(dict(stored, **(_pasteSeed or {})))
+        _pasteSeed = None
     else:
         _editedFeature = None
         gplog.session('COVER dialog CREATE')

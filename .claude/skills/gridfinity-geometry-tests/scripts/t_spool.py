@@ -62,7 +62,7 @@ ipc = dict(ip, spoolGuides=False)
 insc = L.insert(cab, ipc); spc = insc['spools']
 py0 = insc['y0'] + float(ipc['front']); py1 = insc['y1'] - float(ipc['wall'])
 front, back = spc['yA'] - spc['D'] / 2 - py0, py1 - spc['yA'] - spc['D'] / 2
-bottom, top = spc['zA'] - spc['D'] / 2 - spc['floorZ'], (insc['z1'] - 0.1) - spc['zA'] - spc['D'] / 2
+bottom, top = spc['zA'] - spc['D'] / 2 - spc['floorZ'], (insc['z1'] - L.SPOOL_TOP_GAP) - spc['zA'] - spc['D'] / 2
 print('play front/back', round(front * 10, 1), round(back * 10, 1), 'floor/top', round(bottom * 10, 1), round(top * 10, 1))
 assert abs(front - back) < 1e-6 and abs(bottom - top) < 1e-6
 # with guides: the eyelet post fits between the front and the spool at its height

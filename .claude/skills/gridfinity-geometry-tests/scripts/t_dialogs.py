@@ -90,9 +90,9 @@ from GridfinityPlus.lib.gridfinityUtils import boxSystemFeature as box, cabinetL
 
 for E in (B, C, D, V):
     E.app = Any(); E.ui = Any()
-B.binFeature.listPlates = lambda des: []
-C.binFeature.listPlates = lambda des: []
-V.binFeature.listPlates = lambda des: []
+B.binFeature.listPlates = lambda des, **kw: []
+C.binFeature.listPlates = lambda des, **kw: []
+V.binFeature.listPlates = lambda des, **kw: []
 box.listCabinets = lambda des: [('Cabinet', 'tok', Any())]
 box.CABINET.readParams = lambda cf: dict(L.CABINET_DEFAULTS)
 B.initDefaultUiState()

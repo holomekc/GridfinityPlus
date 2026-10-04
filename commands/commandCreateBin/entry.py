@@ -2,6 +2,7 @@ import adsk.core, adsk.fusion, traceback
 import os
 import math
 import json
+import types
 
 
 from ...lib import configUtils
@@ -22,6 +23,7 @@ from ...lib.gridfinityUtils.binBodyGeneratorInput import BinBodyGeneratorInput, 
 from ...lib.gridfinityUtils.binBodyTabGeneratorInput import BinBodyTabGeneratorInput
 from ...lib.gridfinityUtils.binBodyTabGenerator import createGridfinityBinBodyTab
 from ...lib.gridfinityUtils import binFeature
+from ...lib.gridfinityUtils import viewRay
 from ...lib.gridfinityUtils import binCutout
 from ...lib.gridfinityUtils import binFastPreview
 from ...lib.gridfinityUtils import gplog
@@ -150,6 +152,8 @@ INFO_TEXT = ("<b>GridfinityPlus</b><br>"
 # --- GridfinityPlus grid placement ---
 GRID_PLACEMENT_GROUP = 'grid_placement_group'
 GRID_PLATE_DROPDOWN = 'grid_plate_dropdown'
+GRID_PLATE_SELECT = 'grid_plate_select'
+GRID_PLATE_NAME = 'grid_plate_name'
 GRID_COL_INPUT = 'grid_col'
 GRID_ROW_INPUT = 'grid_row'
 GRID_ROTATION_DROPDOWN = 'grid_rotation'
@@ -165,6 +169,11 @@ GRID_OVERHANG_BACK = 'grid_overhang_back'
 _previewGraphics = PreviewGraphics()
 # label -> (token, grid) for the current dialog session.
 _plateChoices = {}
+# Copy / paste settings (contextEdit): pasted onto the next edit dialog;
+# _createSeed seeds new bins after a copy.
+_pasteSeed = None
+_createSeed = None
+_lastClick = None      # view ray of the last click (cell picking)
 # CustomFeature being edited, or None in create mode (edit = double-click on
 # a bin feature; this command is its own edit command).
 _editedFeature = None
@@ -354,7 +363,7 @@ def render_actual_bin_dimensions_table(inputs: adsk.core.CommandInputs):
 
 def render_actual_compartment_dimension_units_table(inputs: adsk.core.CommandInputs):
     global actualCompartmentDimensionsUiState
-    actualDimensionsTable = inputs.addTableCommandInput(BIN_COMPARTMENT_REAL_DIMENSIONS_TABLE, "Division size", 2, "1:1")
+    actualDimensionsTable = inputs.addTableCommandInput(BIN_COMPARTMENT_REAL_DIMENSIONS_TABLE, "Size (inside)", 2, "1:1")
     totalWidth = actualDimensionsTable.commandInputs.addTextBoxCommandInput(BIN_COMPARTMENT_REAL_DIMENSIONS_WIDTH, "", "Division width", 1, True)
     actualCompartmentDimensionsUiState.registerCommandInput(totalWidth)
     actualCompartmentDimensionsUiState.initValue(totalWidth.id, "", totalWidth.objectType)
@@ -384,13 +393,25 @@ def update_actual_compartment_unit_dimensions():
     gridWidth: int = commandUIState.getState(BIN_COMPARTMENTS_GRID_BASE_WIDTH_ID)
     gridLength: int = commandUIState.getState(BIN_COMPARTMENTS_GRID_BASE_LENGTH_ID)
     wallThickness: float = commandUIState.getState(BIN_WALL_THICKNESS_INPUT_ID)
-    xyClearance: float = commandUIState.getState(BIN_WITH_LIP_INPUT_ID)
+    xyClearance: float = commandUIState.getState(BIN_XY_CLEARANCE_INPUT_ID)
     try:
         minCompartmentDimensionLimit = (const.BIN_CORNER_FILLET_RADIUS - wallThickness) * 2 * 10
-        cellWidth = round((baseWidth * binWidth - wallThickness * 2 - xyClearance * 2 - wallThickness * (gridWidth - 1)) / gridWidth * 10, 2)
-        actualCompartmentDimensionsUiState.updateValue(BIN_COMPARTMENT_REAL_DIMENSIONS_WIDTH, formatString(f'Division width: {cellWidth} mm', '' if cellWidth >= minCompartmentDimensionLimit else 'red'))
-        cellLength = round((baseLength * binLength - wallThickness * 2 - xyClearance * 2 - wallThickness * (gridLength - 1)) / gridLength * 10, 2)
-        actualCompartmentDimensionsUiState.updateValue(BIN_COMPARTMENT_REAL_DIMENSIONS_LENGTH, formatString(f'Division depth: {cellLength} mm', '' if cellLength >= minCompartmentDimensionLimit else 'red'))
+        cellWidth = round((baseWidth * binWidth - wallThickness * 2 - xyClearance * 2 - wallThickness * (gridWidth - 1)) / gridWidth * 10, 1)
+        cellLength = round((baseLength * binLength - wallThickness * 2 - xyClearance * 2 - wallThickness * (gridLength - 1)) / gridLength * 10, 1)
+        ok = cellWidth >= minCompartmentDimensionLimit and cellLength >= minCompartmentDimensionLimit
+        # Usable height: body top (below the lip) down to the compartment floor.
+        hu = float(commandUIState.getState(BIN_HEIGHT_UNIT_INPUT_ID))
+        binH = float(commandUIState.getState(BIN_HEIGHT_INPUT_ID))
+        bodyTop = (binH - 1) * hu + max(0.0, hu - const.BIN_BASE_HEIGHT)
+        height = round((bodyTop - const.BIN_COMPARTMENT_BOTTOM_THICKNESS) * 10, 1)
+        uniform = commandUIState.getState(BIN_COMPARTMENTS_GRID_TYPE_ID) != BIN_COMPARTMENTS_GRID_TYPE_CUSTOM
+        what = 'Compartment' if uniform else 'Division'
+        actualCompartmentDimensionsUiState.updateValue(
+            BIN_COMPARTMENT_REAL_DIMENSIONS_WIDTH,
+            formatString(f'{what}: {cellWidth} x {cellLength} mm', '' if ok else 'red'))
+        actualCompartmentDimensionsUiState.updateValue(
+            BIN_COMPARTMENT_REAL_DIMENSIONS_LENGTH,
+            f'{height} mm deep' if uniform else f'{height} mm deep; n divisions = n x size + (n-1) x {round(wallThickness * 10, 1)} mm')
     except:
         showErrorInMessageBox()
 
@@ -604,7 +625,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     global commandUIState
     global actualDimensionsTableUiState
     global commandCompartmentsTableUIState
-    global _editedFeature, _plateChoices
+    global _editedFeature, _plateChoices, _lastClick, _pasteSeed
+    _lastClick = None
 
     args.command.setDialogInitialSize(400, 500)
     # Inputs registered by the previous (closed) dialog are dead; writing to
@@ -617,6 +639,23 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     # Edit mode? (double-click on a bin custom feature routes here)
     _editedFeature = _resolveEditedBinFeature()
     storedParams = binFeature.readParams(_editedFeature) if _editedFeature else None
+    seed = None
+    if storedParams and _pasteSeed:
+        storedParams = dict(storedParams, **_pasteSeed)
+    elif not storedParams and _createSeed:
+        seed = _createSeed
+    _pasteSeed = None
+    if seed:
+        # Settings copied from another bin.
+        try:
+            if 'geom' in seed:
+                commandUIState.initValues(seed['geom'])
+            commandCompartmentsTableUIState = []
+            for row in seed.get('compartmentsTable', []):
+                commandCompartmentsTableUIState.append(CommandUiState(CMD_NAME))
+                commandCompartmentsTableUIState[-1].initValues(row)
+        except Exception:
+            gplog.logExc('bin create: seeding from copied settings')
     if storedParams:
         gplog.session(f'BIN dialog opened in EDIT mode for "{_editedFeature.name}"')
         # Selected bin + Bin button = edit that bin; make that obvious.
@@ -647,7 +686,11 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
     # --- GridfinityPlus: grid placement group ---
     des = adsk.fusion.Design.cast(app.activeProduct)
-    plates = binFeature.listPlates(des) if des else []
+    # Bins with a stacking lip are plates too; never the edited bin itself or
+    # a bin standing on it.
+    blocked = [] if _editedFeature is None else [_editedFeature] + binFeature.binsAbove(des, _editedFeature)
+    plates = [pl for pl in binFeature.listPlates(des, includeBins=True)
+              if pl[2].entity not in blocked] if des else []
     _plateChoices = {label: (token, grid) for label, token, grid in plates}
     gplog.log(f'bin dialog: plates found={[label for label, _, _ in plates]}')
     gridGroup = inputs.addGroupCommandInput(GRID_PLACEMENT_GROUP, 'Placement')
@@ -656,8 +699,17 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         GRID_PLACEMENT_INFO, '',
         '<b>Click a cell</b> on the baseplate to place the bin. '
         '<b>Ctrl+Click</b> rotates it by 90°.', 2, True)
+    # Pick the plate like a body: click a baseplate, cabinet or bin (with a
+    # stacking lip). The selection only finds the plate and is cleared again
+    # (no highlight); the dropdown behind it stays hidden.
+    plateSel = gridGroup.children.addSelectionInput(
+        GRID_PLATE_SELECT, 'Pick', 'Click a baseplate, cabinet or bin to place the bin on')
+    plateSel.addSelectionFilter('SolidBodies')
+    plateSel.setSelectionLimits(0, 1)
+    plateName = gridGroup.children.addTextBoxCommandInput(GRID_PLATE_NAME, 'Placed on', '', 1, True)
     plateDropdown = gridGroup.children.addDropDownCommandInput(
         GRID_PLATE_DROPDOWN, 'Baseplate', adsk.core.DropDownStyles.TextListDropDownStyle)
+    plateDropdown.isVisible = False
     storedToken = storedParams.get('plateToken') if storedParams else None
     if storedToken:
         storedToken = binFeature.matchPlateToken(des, storedToken, plates) or storedToken
@@ -667,6 +719,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         plateDropdown.listItems.add(label, isSel)
         selectedAny = selectedAny or isSel
     plateDropdown.listItems.add(GRID_PLATE_NONE, not selectedAny)
+    plateName.text = plateDropdown.selectedItem.name if plateDropdown.selectedItem else GRID_PLATE_NONE
 
     colDefault = int(storedParams['col']) if storedParams else 0
     rowDefault = int(storedParams['row']) if storedParams else 0
@@ -887,6 +940,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     futil.add_handler(args.command.destroy, command_destroy, local_handlers=local_handlers)
     # Interactive placement: click a plate cell; Ctrl+Click rotates.
     futil.add_handler(args.command.mouseClick, command_mouse_click, local_handlers=local_handlers)
+    futil.add_handler(args.command.preSelect, command_pre_select, local_handlers=local_handlers)
 
 
 def _overhangModes(inputs) -> dict:
@@ -1042,22 +1096,72 @@ def command_preview(args: adsk.core.CommandEventArgs):
         args.executeFailedMessage = getErrorMessage()
 
 
+def command_pre_select(args: adsk.core.SelectionEventArgs):
+    """Only bodies of a plate, cabinet top or stackable bin can be picked."""
+    try:
+        if args.activeInput is None or args.activeInput.id != GRID_PLATE_SELECT:
+            return
+        args.isSelectable = binFeature.plateLabelOfBody(args.selection.entity, _plateChoices) is not None
+    except Exception:
+        gplog.logExc('bin preSelect')
+
+
+def _showPlateName(inputs):
+    dd = adsk.core.DropDownCommandInput.cast(inputs.itemById(GRID_PLATE_DROPDOWN))
+    box = adsk.core.TextBoxCommandInput.cast(inputs.itemById(GRID_PLATE_NAME))
+    if dd is not None and box is not None:
+        box.text = dd.selectedItem.name if dd.selectedItem else GRID_PLATE_NONE
+
+
+def _takePlateSelection(inputs):
+    """A plate / cabinet / bin body was clicked: place on it (cell from the
+    same click), then clear the selection so nothing stays highlighted."""
+    sel = adsk.core.SelectionCommandInput.cast(inputs.itemById(GRID_PLATE_SELECT))
+    if sel is None or sel.selectionCount == 0:
+        return
+    label = binFeature.plateLabelOfBody(sel.selection(0).entity, _plateChoices)
+    sel.clearSelection()
+    if label is None:
+        return
+    binFeature.selectPlate(inputs.itemById(GRID_PLATE_DROPDOWN), label)
+    _showPlateName(inputs)
+    if _lastClick is None:
+        return
+    des = adsk.fusion.Design.cast(app.activeProduct)
+    occ, grid, _ = binFeature.resolvePlate(des, _plateChoices[label][0])
+    if grid is None:
+        return
+    hit = viewRay.hitRayPlane(_lastClick, gridRegistry.gridTransform(grid, occ), 2, 0.0)
+    if hit is None:
+        return
+    params = _placementParams(inputs)
+    params['col'] = int((hit[0] - grid.originX) // grid.pitchX)
+    params['row'] = int((hit[1] - grid.originY) // grid.pitchY)
+    col, row = binFeature.clampCell(grid, params)
+    inputs.itemById(GRID_COL_INPUT).value = col + 1
+    inputs.itemById(GRID_ROW_INPUT).value = row + 1
+    gplog.log(f'bin pick: "{label}" cell ({col},{row})')
+
+
 def command_mouse_click(args: adsk.core.MouseEventArgs):
     """Click on the baseplate -> snap the bin to the cell under the cursor.
     Ctrl+Click -> rotate by 90° instead (keyboard shortcuts collide with
     Fusion's global tool shortcuts and kill the dialog)."""
+    global _lastClick
     try:
         inputs = args.firingEvent.sender.commandInputs
         if args.keyboardModifiers & adsk.core.KeyboardModifiers.CtrlKeyboardModifier:
             _cycleRotation(inputs)
             return
+        _lastClick = viewRay.clickRay(args)
         des = adsk.fusion.Design.cast(app.activeProduct)
-        # Whatever grid is under the cursor: a baseplate or a cabinet top.
+        # Whatever grid is under the cursor: a baseplate, cabinet top or bin.
         pick = binFeature.plateAtClick(des, args, _plateChoices)
         if pick is not None:
             label, occ, grid, hit = pick
             if binFeature.selectPlate(inputs.itemById(GRID_PLATE_DROPDOWN), label):
                 gplog.log(f'bin mouseClick: switched to "{label}"')
+                _showPlateName(inputs)
             params = _placementParams(inputs)
             params['col'] = int((hit[0] - grid.originX) // grid.pitchX)
             params['row'] = int((hit[1] - grid.originY) // grid.pitchY)
@@ -1178,8 +1282,13 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     if changed_input.id == GRID_ROTATE_BUTTON:
         _cycleRotation(inputs)
         return
+    if changed_input.id == GRID_PLATE_SELECT:
+        _takePlateSelection(args.firingEvent.sender.commandInputs)
+        return
+    if changed_input.id == GRID_PLATE_DROPDOWN:
+        _showPlateName(args.firingEvent.sender.commandInputs)
     if changed_input.id in (GRID_COL_INPUT, GRID_ROW_INPUT, GRID_ROTATION_DROPDOWN,
-                            GRID_PLATE_DROPDOWN, GRID_PLACEMENT_GROUP,
+                            GRID_PLATE_DROPDOWN, GRID_PLACEMENT_GROUP, GRID_PLATE_NAME,
                             GRID_OVERHANG_LEFT, GRID_OVERHANG_RIGHT,
                             GRID_OVERHANG_FRONT, GRID_OVERHANG_BACK):
         return
@@ -1315,7 +1424,54 @@ def saveUIInputsAsDefaults():
     else:
         futil.log(f'{CMD_NAME} UI state failed to save')
 
-def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, cacheKey: str):
+class _StoredTable:
+    """Compartments table rebuilt from stored row states."""
+    _COLS = ('x_input_', 'y_input_', 'w_input_', 'l_input_', 'd_input_')
+
+    def __init__(self, rows):
+        self.rows = rows or []
+        self.rowCount = len(self.rows) + 1          # row 0 = header
+
+    def getInputAtPosition(self, row, col):
+        state = self.rows[row - 1]
+        value = next(v['value'] for k, v in state.items() if k.startswith(self._COLS[col]))
+        return types.SimpleNamespace(value=value)
+
+
+class _StoredInputs:
+    """Stands in for the dialog inputs: values from a bin's stored params, so
+    a bin can be rebuilt without its dialog (paste settings onto many)."""
+
+    def __init__(self, geom, table):
+        self.geom, self.table = geom or {}, table
+
+    def itemById(self, inputId):
+        if inputId == BIN_COMPARTMENTS_TABLE_ID:
+            return _StoredTable(self.table)
+        state = self.geom.get(inputId)
+        if state is None:
+            return None
+        value = state.get('value') if isinstance(state, dict) else state
+        if isinstance(value, str) and inputId == BIN_TAB_ANGLE_INPUT_ID:
+            # Angles are stored as expressions ('45 deg'); the dialog input
+            # would give radians.
+            try:
+                value = app.activeProduct.unitsManager.evaluateExpression(value, 'deg')
+            except Exception:
+                value = math.radians(float(''.join(c for c in value if c in '0123456789.-') or 0))
+        return types.SimpleNamespace(value=value, selectedItem=types.SimpleNamespace(name=value),
+                                     isVisible=True, isEnabled=True)
+
+
+def buildBinBodyFromParams(des: adsk.fusion.Design, params: dict):
+    """Temp body (bin local frame) for stored bin params, without a dialog."""
+    ovh = params.get('ovh') or {'left': 0.0, 'right': 0.0, 'front': 0.0, 'back': 0.0}
+    key = json.dumps(['stored', params.get('geom'), params.get('compartmentsTable'), ovh],
+                     sort_keys=True, default=str)
+    return _getBinTempBody(des, _StoredInputs(params.get('geom'), params.get('compartmentsTable')), key, ovh)
+
+
+def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, cacheKey: str, ovh=None):
     """Build the FULL bin (all upstream features) into an isolated scratch
     component, return an independent temp BRep of the result. Cached by the
     complete dialog geometry state, so previews/moves after the first build of
@@ -1386,7 +1542,8 @@ def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, ca
         baseGeneratorInput.magnetCutoutsDepth = bin_magnet_cutout_depth.value
 
         # Extension over the plate's border / partial cells (bin-local sides).
-        ovh = _overhangAmounts(inputs)
+        if ovh is None:
+            ovh = _overhangAmounts(inputs)
         part = ovh.get('partial', {})
         extraL = 1 if part.get('left') else 0
         extraR = 1 if part.get('right') else 0

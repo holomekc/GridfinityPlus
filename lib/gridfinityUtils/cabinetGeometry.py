@@ -25,6 +25,8 @@ from .baseplateFastPreview import (_tmgr, _box, _union, _subtract, _translate,
 from .binFastPreview import _getFoot
 
 _EPS = 0.02
+# How far a notch / finger hole continues through dividers behind the front.
+GRIP_REACH = 2.5
 _SQRT2 = math.sqrt(2.0)
 
 
@@ -356,6 +358,26 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
                   f'front z {fz0:.2f}..{fz1:.2f} -> label {labelRect and [round(v, 2) for v in labelRect]}')
         adds, cuts = [], []
         handleX = _handle(ip, band, (fx0, fx1, fz0, fz1), yF, yB, z0, z1, tw, adds, cuts)
+        gripMode = ip.get('gripDividers', L.GRIP_FRONT_ROW)
+        if (ip['handle'] in (L.HANDLE_NOTCH, L.HANDLE_SLOT) and interior == L.INTERIOR_COMPARTMENTS
+                and (int(ip['divX']) > 1 or int(ip['divY']) > 1) and gripMode != L.GRIP_OFF):
+            # Room for the finger behind a notch / finger hole: the same round
+            # profile runs on through the dividers in its way (floor and outer
+            # walls stay) - along the front row of compartments (up to the
+            # first cross divider) or a set depth.
+            if gripMode == L.GRIP_DEPTH:
+                reach = float(ip.get('gripDepth') or GRIP_REACH)
+            else:
+                cy = max(1, int(ip['divY']))
+                reach = (py1 - py0 - (cy - 1) * tw) / cy
+            reach = min(reach, py1 - yB)
+            if reach > 0.1:
+                gripCuts = []
+                _handle(ip, band, (fx0, fx1, fz0, fz1), yB - _EPS, yB + reach, z0, z1, tw, [], gripCuts)
+                for tool in gripCuts:
+                    _tmgr().booleanOperation(tool, _box(px0, px1, yB - _EPS, yB + reach, pz0, z1 + 1.0),
+                                             adsk.fusion.BooleanTypes.IntersectionBooleanType)
+                    cuts.append(tool)
         _label(ip, labelRect, yF, adds, cuts)
         spools = ins['spools']
         extraParts = []

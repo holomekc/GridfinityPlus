@@ -38,6 +38,8 @@ local_handlers = []
 
 # State for the current edit session.
 _editedFeature = None
+# Copy / paste settings (contextEdit): pasted onto the next edit dialog.
+_pasteSeed = None
 _editedParams = None
 _hiddenBodies = []
 _previewGraphics = PreviewGraphics()
@@ -118,6 +120,7 @@ def _setEditedVisibility(visible: bool):
 
 
 def command_created(args: adsk.core.CommandCreatedEventArgs):
+    global _pasteSeed
     futil.log(f'{CMD_NAME} Command Created Event')
     global _editedFeature, _editedParams
 
@@ -145,7 +148,8 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     p = _editedParams
     inputs = args.command.commandInputs
     args.command.setDialogInitialSize(380, 560)
-    values = plateDialog.valuesFromParams(p)
+    values = plateDialog.valuesFromParams(dict(p, **(_pasteSeed or {})))
+    _pasteSeed = None
     plateDialog.build(inputs, values, isEdit=True)
     if not placement.hasPlacement(p):
         # Plate from before placement existed: keep it exactly where it is

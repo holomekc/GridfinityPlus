@@ -65,6 +65,13 @@ HANDLE_NOTCH = 'Top notch'
 HANDLE_SLOT = 'Finger hole'
 HANDLE_KNOB = 'Knob'
 HANDLE_TYPES = (HANDLE_RECESS, HANDLE_PULL, HANDLE_LEDGE, HANDLE_NOTCH, HANDLE_SLOT, HANDLE_KNOB, HANDLE_NONE)
+# Notch / finger hole with compartments: dividers in the way are lowered with
+# the same round profile - along the front row of compartments, a set depth,
+# or not at all.
+GRIP_FRONT_ROW = 'Front row'
+GRIP_DEPTH = 'Custom depth'
+GRIP_OFF = 'Off'
+GRIP_MODES = (GRIP_FRONT_ROW, GRIP_DEPTH, GRIP_OFF)
 
 # Pull handle presets for values stored by earlier versions:
 # (grip face height, grip thickness, top thickness, side walls; 0 = open).
@@ -268,6 +275,8 @@ INSERT_DEFAULTS = {
     'handleWidth': 4.0,
     'handleHeight': 1.6,
     'handleDepth': 1.5,
+    'gripDividers': GRIP_FRONT_ROW,
+    'gripDepth': 2.5,
     'knobStyle': KNOB_ROUND,
     'knobSupport': KNOB_SUPPORT_STAND,
     'pullGrip': 0.5,
@@ -611,7 +620,10 @@ SPOOL_POST = 0.3
 SPOOL_PLAY = 0.15
 SPOOL_COLLAR = 0.2
 SPOOL_COLLAR_GAP = 0.05
-SPOOL_BOTTOM_GAP = 0.2
+# Spool hangs on the axle: 1 mm over the floor; at the top it may reach the
+# drawer rim (the cabinet's height clearance is still above it).
+SPOOL_BOTTOM_GAP = 0.1
+SPOOL_TOP_GAP = 0.0
 SPOOL_BACK_GAP = 0.2
 SPOOL_AXLE_PLAY = 0.08
 # Wire eyelet post: depth, gap to the front wall and to the spool.
@@ -673,7 +685,7 @@ def spoolLayout(ins: dict) -> dict:
     avail = px1 - px0
     if need > avail + 1e-9:
         errors.append('{} spool(s) need {:.0f} mm, {:.0f} mm free inside'.format(n, need * 10, avail * 10))
-    topZ = ins['z1'] - 0.1
+    topZ = ins['z1'] - SPOOL_TOP_GAP
     maxD = topZ - floorZ - SPOOL_BOTTOM_GAP
     if D > maxD + 1e-9:
         errors.append('Spool too big for this drawer: max {:.0f} mm diameter'.format(maxD * 10))
@@ -726,7 +738,7 @@ def spoolLayout(ins: dict) -> dict:
 
     return {
         'n': n, 'D': D, 'Ws': Ws, 'axleD': axleD, 'wireD': wireD,
-        'zA': zA, 'yA': yA, 'floorZ': floorZ,
+        'zA': zA, 'yA': yA, 'floorZ': floorZ, 'maxD': maxD,
         'posts': posts, 'centers': centers, 'play': play,
         'snap': ip.get('spoolMount') == MOUNT_SNAP,
         'holeZ': holeZ, 'guideY': guideY,

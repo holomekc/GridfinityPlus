@@ -61,6 +61,9 @@ _plateChoices = {}      # label -> (token, grid)
 _editedFeature = None
 _hiddenBodies = []
 _lastParams = dict(L.CABINET_DEFAULTS)
+
+# Copy / paste settings (contextEdit): pasted onto the next edit dialog.
+_pasteSeed = None
 _bodyCache = {}         # geometry key -> temp body (dialog session)
 
 
@@ -129,7 +132,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
 
 
 def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
-    global _editedFeature, _plateChoices
+    global _editedFeature, _plateChoices, _pasteSeed
     _bodyCache.clear()
     args.command.setDialogInitialSize(380, 600)
     des = adsk.fusion.Design.cast(app.activeProduct)
@@ -140,7 +143,8 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     if stored:
         gplog.session(f'CABINET dialog EDIT "{_editedFeature.name}"')
         args.command.okButtonText = 'Update cabinet'
-        p = L.withDefaults(stored, L.CABINET_DEFAULTS)
+        p = L.withDefaults(dict(stored, **(_pasteSeed or {})), L.CABINET_DEFAULTS)
+        _pasteSeed = None
     else:
         _editedFeature = None
         gplog.session('CABINET dialog CREATE')

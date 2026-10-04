@@ -57,6 +57,9 @@ INPUT_CHANGES_RESET_TO_FACTORY = 'input_changes_button_factory_reset'
 
 INPUTS_VALID = True
 
+# Settings copied from a baseplate (contextEdit): seed for new plates.
+_createSeed = None
+
 def getErrorMessage(text = "An unknown error occurred, please validate your inputs and try again"):
     stackTrace = traceback.format_exc()
     return f"{text}:<br>{stackTrace}"
@@ -139,9 +142,14 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     # https://help.autodesk.com/view/fusion360/ENU/?contextId=CommandInputs
     inputs = args.command.commandInputs
 
+    if _createSeed:
+        # Settings copied from another baseplate.
+        values = plateDialog.valuesFromParams(_createSeed)
+    else:
+        values = {fid: uiState.getState(fid) for fid in plateDialog.FIELD_BY_ID}
     created = plateDialog.build(
         inputs,
-        {fid: uiState.getState(fid) for fid in plateDialog.FIELD_BY_ID},
+        values,
         groupExpanded=lambda gid: uiState.getState(gid) if gid in uiState.inputState else True)
     for fid, inp in created.items():
         if fid in plateDialog.FIELD_BY_ID or isinstance(inp, adsk.core.GroupCommandInput):

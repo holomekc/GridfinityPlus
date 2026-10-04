@@ -338,6 +338,7 @@ def rebuildCabinet(des: adsk.fusion.Design, cf, params: dict, _visited=None):
                 rebuildCover(des, cover, cp)
             except Exception:
                 gplog.logExc('rebuild cover on cabinet')
+    binFeature.moveStacked(des, cf)
 
 
 def refersTo(des: adsk.fusion.Design, token, entity) -> bool:
