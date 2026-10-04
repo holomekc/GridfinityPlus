@@ -393,7 +393,7 @@ def insertName(cabParams: dict, insertParams: dict) -> str:
 def _insertBodies(des, cabParams, insertParams):
     matrix = insertMatrix(des, cabParams, world=False)
     parts = [_placed(b, matrix) for b in cabinetGeometry.buildInsertParts(des, cabParams, insertParams)]
-    return parts, ['axle'] * (len(parts) - 1)
+    return parts, cabinetGeometry.insertPartNames(insertParams)
 
 
 def createInsert(des: adsk.fusion.Design, cabCf, insertParams: dict):

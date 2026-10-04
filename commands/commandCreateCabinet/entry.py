@@ -45,7 +45,8 @@ IN_COL = 'col'
 IN_ROW = 'gridRow'
 IN_ROTATION = 'rotation'
 IN_ROTATE = 'rotateButton'
-IN_INFO = 'info'
+IN_RESULT = 'result'
+RESULT_KEYS = ('Outside', 'Column inside', 'Rows (free height)', 'Back wall', 'Wall mount')
 PLATE_NONE = '(free, no snapping)'
 # 'Fill to edge' (bin-style overhang over plate border / partial cells).
 OVERHANG_INPUTS = (('ovhLeft', 'left', 'Fill to edge: left'), ('ovhRight', 'right', 'Fill to edge: right'),
@@ -237,18 +238,37 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'fitBack', 'Back clearance', p, units, minimum=0.0, maximum=1.0)
 
     # --- bottom / top
-    g = inputs.addGroupCommandInput('bottomTopGroup', 'Bottom & top').children
+    g = inputs.addGroupCommandInput('bottomGroup', 'Bottom').children
     form.boolean(g, 'feet', 'Gridfinity feet', p, 'Off: flat bottom (same total height)')
     form.boolean(g, 'magnets', 'Magnet holes', p)
     form.boolean(g, 'screws', 'Screw holes', p)
+
+    g = inputs.addGroupCommandInput('topGroup', 'Top').children
     form.choice(g, 'topType', 'Top', p, L.TOP_TYPES,
                 'Gridfinity grid: bins and further cabinets snap onto the top')
     form.choice(g, 'topEdge', 'Top over border', p, L.TOP_EDGE_TYPES,
                 'Where the cabinet fills to the plate edge: repeat a partial cell as a cut '
                 'pocket (like the baseplate), or keep it flat')
-    form.boolean(g, 'wallMount', 'Wall mount holes', p, 'Two countersunk screw holes (4 mm) in the back wall')
 
-    inputs.addTextBoxCommandInput(IN_INFO, 'Result', '', 6, True)
+    mountGroup = inputs.addGroupCommandInput('mountGroup', 'Wall mount')
+    mountGroup.isExpanded = bool(p['wallMount'])
+    g = mountGroup.children
+    form.boolean(g, 'wallMount', 'Screw holes', p,
+                 'Screw holes in the back wall, screwed from the inside (pull the drawers out). '
+                 'The back wall gets thick enough for the head to sit flush.')
+    form.choice(g, 'mountScrew', 'Screw', p, L.MOUNT_SCREW_NAMES)
+    form.choice(g, 'mountHead', 'Head', p, L.MOUNT_HEADS,
+                'Countersunk: 90° countersink. Pan / cheese head: flat-bottomed counterbore.')
+    form.integer(g, 'mountRows', 'Rows', p, 1, 2, '1 = near the top, 2 = near the top and the bottom')
+    form.integer(g, 'mountPerRow', 'Holes per row', p, 1, 6, 'Evenly spread across the back')
+    form.length(g, 'mountEdge', 'From the sides', p, units, minimum=0.0,
+                tooltip='Distance of the outer holes from the side walls (inside)')
+    form.length(g, 'mountTop', 'From the top', p, units, minimum=0.0,
+                tooltip='Distance of the top row from the ceiling (inside)')
+    form.length(g, 'mountBottom', 'From the bottom', p, units, minimum=0.0,
+                tooltip='Distance of the bottom row from the floor (inside)')
+
+    form.resultGroup(inputs, IN_RESULT, 'Result', RESULT_KEYS)
 
     _syncVisibility(inputs)
     _updateInfo(inputs)
@@ -298,7 +318,8 @@ def _body(des, p):
 
 
 def _syncVisibility(inputs):
-    p = form.read(inputs, ('heightMode', 'guide', 'feet', 'rows', 'rowWeights', 'topType', 'detent'))
+    p = form.read(inputs, ('heightMode', 'guide', 'feet', 'rows', 'rowWeights', 'topType', 'detent',
+                           'wallMount', 'mountRows', 'mountPerRow'))
     byUnits = p['heightMode'] == HEIGHT_MODES[0]
     form.setVisible(inputs, 'heightUnits', byUnits)
     form.setVisible(inputs, 'heightMm', not byUnits)
@@ -310,6 +331,11 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'screws', bool(p['feet']))
     form.setVisible(inputs, 'topEdge', p['topType'] == L.TOP_GRID)
     form.setVisible(inputs, 'detentHeight', bool(p['detent']))
+    mount = bool(p['wallMount'])
+    for inputId in ('mountScrew', 'mountHead', 'mountRows', 'mountPerRow', 'mountEdge', 'mountTop'):
+        form.setVisible(inputs, inputId, mount)
+    form.setVisible(inputs, 'mountBottom', mount and int(p['mountRows']) > 1)
+    form.setVisible(inputs, 'mountEdge', mount and int(p['mountPerRow']) > 1)
     rows = inputs.itemById('rows')
     if rows is not None:
         rows.isEnabled = not str(p['rowWeights'] or '').strip()
@@ -321,12 +347,17 @@ def _updateInfo(inputs):
         cab = L.cabinet(p)
         mm = lambda v: '{:.1f}'.format(v * 10)
         x0, x1 = cab['columns'][0]
-        lines = ['Outside: {} x {} x {} mm'.format(mm(cab['x1'] - cab['x0']), mm(cab['back'] - cab['front']), mm(cab['zTop'] + const.BIN_BASE_HEIGHT))]
-        lines.append('Column inside: {} mm wide, {} mm deep'.format(mm(x1 - x0), mm(cab['innerBack'] - cab['front'])))
-        lines.append('Rows (free height): ' + ', '.join(mm(r['height']) for r in cab['rows']) + ' mm')
-        for e in cab['errors']:
-            lines.append(f'<font color="red">{e}</font>')
-        inputs.itemById(IN_INFO).formattedText = '<br>'.join(lines)
+        values = {
+            'Outside': '{} x {} x {} mm'.format(mm(cab['x1'] - cab['x0']), mm(cab['back'] - cab['front']),
+                                                mm(cab['zTop'] + const.BIN_BASE_HEIGHT)),
+            'Column inside': '{} wide, {} deep (mm)'.format(mm(x1 - x0), mm(cab['innerBack'] - cab['front'])),
+            'Rows (free height)': ', '.join(mm(r['height']) for r in cab['rows']) + ' mm',
+            'Back wall': '{} mm'.format(mm(cab['backWall'])),
+        }
+        if p['wallMount']:
+            values['Wall mount'] = '{} x {} {} (head flush inside)'.format(
+                len(L.mountHoles(cab)), p['mountScrew'], p['mountHead'].lower())
+        form.setResults(inputs, IN_RESULT, values, cab['errors'])
     except Exception:
         gplog.logExc('cabinet info')
 
@@ -335,10 +366,12 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     # args.inputs only holds the changed input's group; use the whole dialog.
     inputs = args.firingEvent.sender.commandInputs
     changed = args.input
+    if form.isResultInput(IN_RESULT, changed.id):
+        return  # our own read-only result lines
     if changed.id == IN_ROTATE:
         _cycleRotation(inputs)
         return
-    if changed.id in ('heightMode', 'guide', 'feet', 'rowWeights', 'topType', 'detent'):
+    if changed.id in ('heightMode', 'guide', 'feet', 'rowWeights', 'topType', 'detent', 'wallMount', 'mountRows', 'mountPerRow'):
         _syncVisibility(inputs)
     if changed.id == 'heightMode':
         # Carry the height across modes.

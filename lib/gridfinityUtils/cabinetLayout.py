@@ -95,18 +95,35 @@ LABEL_RECESS = 'Sticker recess'
 LABEL_CARD = 'Card holder'
 LABEL_TYPES = (LABEL_RECESS, LABEL_CARD, LABEL_NONE)
 LABEL_AUTO = 'Auto'
-LABEL_BOTTOM = 'Below handle'
-LABEL_TOP = 'Above handle'
-LABEL_LEFT = 'Left of handle'
-LABEL_RIGHT = 'Right of handle'
-LABEL_POSITIONS = (LABEL_AUTO, LABEL_BOTTOM, LABEL_TOP, LABEL_LEFT, LABEL_RIGHT)
+# 3 x 3 grid on the front: (row, column) per position.
+LABEL_TOP_LEFT = 'Top left'
+LABEL_TOP = 'Top center'
+LABEL_TOP_RIGHT = 'Top right'
+LABEL_LEFT = 'Middle left'
+LABEL_CENTER = 'Center'
+LABEL_RIGHT = 'Middle right'
+LABEL_BOTTOM_LEFT = 'Bottom left'
+LABEL_BOTTOM = 'Bottom center'
+LABEL_BOTTOM_RIGHT = 'Bottom right'
+LABEL_POSITIONS = (LABEL_AUTO,
+                   LABEL_TOP_LEFT, LABEL_TOP, LABEL_TOP_RIGHT,
+                   LABEL_LEFT, LABEL_CENTER, LABEL_RIGHT,
+                   LABEL_BOTTOM_LEFT, LABEL_BOTTOM, LABEL_BOTTOM_RIGHT)
+LABEL_GRID = {
+    LABEL_TOP_LEFT: ('top', 'left'), LABEL_TOP: ('top', 'center'), LABEL_TOP_RIGHT: ('top', 'right'),
+    LABEL_LEFT: ('middle', 'left'), LABEL_CENTER: ('middle', 'center'), LABEL_RIGHT: ('middle', 'right'),
+    LABEL_BOTTOM_LEFT: ('bottom', 'left'), LABEL_BOTTOM: ('bottom', 'center'),
+    LABEL_BOTTOM_RIGHT: ('bottom', 'right'),
+}
 
 # Values stored by earlier versions -> current ones.
 _LEGACY = {
     'insertType': {'Drawer (overlay front)': INSERT_DRAWER, 'Box (flush front)': INSERT_DRAWER},
     'handle': {'Finger notch': HANDLE_NOTCH, 'Finger slot': HANDLE_SLOT, 'Pull tab': HANDLE_PULL,
                'Hook lip': HANDLE_PULL, 'Bar handle': HANDLE_PULL, 'Scoop pull': HANDLE_PULL},
-    'labelPos': {'Bottom': LABEL_BOTTOM, 'Top': LABEL_TOP},
+    'labelPos': {'Below handle': LABEL_BOTTOM, 'Above handle': LABEL_TOP,
+                 'Left of handle': LABEL_LEFT, 'Right of handle': LABEL_RIGHT,
+                 'Top': LABEL_TOP, 'Bottom': LABEL_BOTTOM, 'Left': LABEL_LEFT, 'Right': LABEL_RIGHT},
 }
 
 # Smallest free row height an insert can live in.
@@ -123,6 +140,73 @@ DETENT_RIDGE = 0.15
 DETENT_CLEARANCE = 0.02
 # Pull-out stop: solid land at the insert's back end that hits the bump.
 STOP_LAND = 0.4
+
+# Wall mount screws: clearance hole, countersunk head (DIN 7991, 90°) and
+# pan / cheese head (ISO 7045 / ISO 1207) diameter + height, in cm.
+MOUNT_SCREWS = {
+    'M2': {'hole': 0.24, 'cskD': 0.40, 'panD': 0.40, 'panK': 0.16},
+    'M2.5': {'hole': 0.29, 'cskD': 0.50, 'panD': 0.50, 'panK': 0.20},
+    'M3': {'hole': 0.34, 'cskD': 0.60, 'panD': 0.56, 'panK': 0.24},
+    'M4': {'hole': 0.45, 'cskD': 0.80, 'panD': 0.80, 'panK': 0.31},
+    'M5': {'hole': 0.55, 'cskD': 1.00, 'panD': 0.95, 'panK': 0.38},
+    'M6': {'hole': 0.66, 'cskD': 1.20, 'panD': 1.20, 'panK': 0.46},
+}
+MOUNT_SCREW_NAMES = tuple(MOUNT_SCREWS)
+HEAD_COUNTERSUNK = 'Countersunk'
+HEAD_PAN = 'Pan / cheese head'
+MOUNT_HEADS = (HEAD_COUNTERSUNK, HEAD_PAN)
+# Head clearance and material left under a pan head / beside a countersink.
+MOUNT_HEAD_PLAY = 0.03
+MOUNT_MIN_MATERIAL = 0.08
+
+
+def mountScrew(p: dict) -> dict:
+    """Hole geometry for the chosen screw: hole radius, head radius, head
+    depth (flush with the inside of the back wall) and the back wall it needs."""
+    sc = MOUNT_SCREWS.get(p.get('mountScrew'), MOUNT_SCREWS['M4'])
+    hole = sc['hole']
+    if p.get('mountHead') == HEAD_PAN:
+        headD = sc['panD'] + 2 * MOUNT_HEAD_PLAY
+        depth = sc['panK'] + MOUNT_HEAD_PLAY
+    else:
+        headD = sc['cskD'] + 2 * MOUNT_HEAD_PLAY
+        depth = (headD - hole) / 2          # 90° countersink
+    return {'holeR': hole / 2, 'headR': headD / 2, 'depth': depth,
+            'countersunk': p.get('mountHead') != HEAD_PAN,
+            'wall': depth + MOUNT_MIN_MATERIAL}
+
+
+def mountHoles(cab: dict):
+    """[(x, z)] of the wall mount holes in the back wall: rows at mountTop
+    below the ceiling (and mountBottom above the floor), evenly spread between
+    mountEdge from the side walls. Holes that would cut into a divider move
+    into the nearest column."""
+    p = cab['p']
+    if not p['wallMount']:
+        return []
+    sc = mountScrew(p)
+    cols = cab['columns']
+    xa = cols[0][0] + float(p['mountEdge'])
+    xb = cols[-1][1] - float(p['mountEdge'])
+    n = max(1, int(p['mountPerRow']))
+    if n == 1 or xb <= xa:
+        xs = [(cols[0][0] + cols[-1][1]) / 2]
+    else:
+        xs = [xa + i * (xb - xa) / (n - 1) for i in range(n)]
+    keep = sc['headR'] + 0.05
+    fixed = []
+    for x in xs:
+        inside = [c for c in cols if c[0] + keep <= x <= c[1] - keep]
+        if not inside:
+            # Nearest column, kept clear of its walls.
+            c = min(cols, key=lambda c: min(abs(x - c[0]), abs(x - c[1])))
+            x = min(max(x, c[0] + keep), c[1] - keep)
+        fixed.append(x)
+    zs = [cab['ceil'] - float(p['mountTop'])]
+    if int(p['mountRows']) > 1:
+        zs.append(cab['floorTop'] + float(p['mountBottom']))
+    return [(x, z) for z in zs for x in fixed]
+
 
 CABINET_DEFAULTS = {
     'unitsW': 2,
@@ -156,6 +240,13 @@ CABINET_DEFAULTS = {
     'screws': False,
     'topType': TOP_GRID,
     'wallMount': False,
+    'mountScrew': 'M4',
+    'mountHead': 'Countersunk',
+    'mountRows': 1,
+    'mountPerRow': 2,
+    'mountEdge': 1.5,
+    'mountTop': 1.0,
+    'mountBottom': 1.0,
     # Body extension over plate border / partial cells, resolved from the plate.
     'ovh': {},
     'topEdge': TOP_EDGE_PLATE,
@@ -191,6 +282,8 @@ INSERT_DEFAULTS = {
     'pullSides': 0.2,
     'label': LABEL_RECESS,
     'labelPos': LABEL_AUTO,
+    'labelOffsetX': 0.0,
+    'labelOffsetZ': 0.0,
     'labelWidth': 5.0,
     'labelHeight': 1.2,
     'wireHoles': 0,
@@ -200,6 +293,22 @@ INSERT_DEFAULTS = {
     'spoolWidth': 2.5,
     'spoolBore': 1.0,
     'spoolGuides': True,
+    # Also draw the spools as a body in the model (planning only, not printed).
+    'showSpools': False,
+    'spoolPlay': 0.1,
+    'spoolDivider': 0.3,
+    'spoolEnd': 0.3,
+    'spoolMount': 'Open',
+    'spoolHolePos': 'Bottom',
+    'spoolHoleOffset': 0.0,
+    'spoolHoleDiameter': 0.25,
+    'axleEndPlay': 0.05,
+    'axleCollar': 0.2,
+    'axleSplit': 'Bayonet (2 halves)',
+    # Round fillet where cradles / eyelet posts meet the floor (0 = off).
+    'spoolFillet': 0.2,
+    # One-piece axle: length of the end without collar past the end support (0 = to the wall).
+    'axleEndLength': 0.0,
     'interior': INTERIOR_EMPTY,
     'divX': 2,
     'divY': 1,
@@ -272,6 +381,9 @@ def cabinet(params: dict) -> dict:
         wall = max(wall, gd + GROOVE_MIN_BACKING)
         divider = max(divider, 2 * gd + GROOVE_MIN_BACKING)
     backWall = float(p['backWall'])
+    if p['wallMount']:
+        # Screw heads must sit flush with the inside: drawers touch the back.
+        backWall = max(backWall, mountScrew(p)['wall'])
     floorTop = zBottom + float(p['floor']) if not p['feet'] else float(p['floor'])
     topIsGrid = p['topType'] == TOP_GRID
     topThickness = float(p['top']) + (baseH if topIsGrid else 0.0)
@@ -309,7 +421,7 @@ def cabinet(params: dict) -> dict:
     if grooved and any(r['height'] < 2 * gd + GROOVE_TIP + 0.4 for r in rows):
         errors.append('Rows too low for the grooves')
 
-    return {
+    cab = {
         'p': p,
         'aW': aW, 'aL': aL,
         'x0': ox0, 'x1': ox1, 'front': oy0, 'back': oy1,
@@ -326,6 +438,11 @@ def cabinet(params: dict) -> dict:
         'ledgeDepth': float(p['ledgeDepth']), 'ledgeThickness': float(p['ledgeThickness']),
         'errors': errors,
     }
+    if p['wallMount']:
+        r = mountScrew(p)['headR']
+        if any(not (floorTop + r <= z <= ceil - r) for _, z in mountHoles(cab)):
+            errors.append('Wall mount holes outside the back wall: check the distances from top / bottom')
+    return cab
 
 
 def grooveCenter(row: dict) -> float:
@@ -492,6 +609,23 @@ SPOOL_BACK_GAP = 0.2
 SPOOL_AXLE_PLAY = 0.08
 # Free depth in front of the spools for the wire eyelets.
 GUIDE_SPACE = 1.0
+# Axle in its cradles: laid in an open U, or clicked past two lips.
+MOUNT_OPEN = 'Open'
+MOUNT_SNAP = 'Snap-in'
+SPOOL_MOUNTS = (MOUNT_OPEN, MOUNT_SNAP)
+SPOOL_SNAP = 0.03            # lip overlap per side (0.3 mm)
+# Axle: two halves joined by a bayonet in the middle (each printed standing
+# on its collar), or one piece with a single collar (printed lying down).
+AXLE_BAYONET = 'Bayonet (2 halves)'
+AXLE_BAYONET_SMOOTH = 'Bayonet, smooth outside'
+AXLE_ONE_PIECE = 'One piece'
+AXLE_SPLITS = (AXLE_BAYONET, AXLE_BAYONET_SMOOTH, AXLE_ONE_PIECE)
+MIN_SPOOL_WALL = 0.04        # thinnest divider / end support: one 0.4 mm line
+# Wire outlet height in front of the spools.
+HOLE_BOTTOM = 'Bottom'
+HOLE_MIDDLE = 'Middle'
+HOLE_TOP = 'Top'
+HOLE_POSITIONS = (HOLE_BOTTOM, HOLE_MIDDLE, HOLE_TOP)
 
 
 def spoolLayout(ins: dict) -> dict:
@@ -514,12 +648,18 @@ def spoolLayout(ins: dict) -> dict:
     D = float(ip['spoolDiameter'])
     Ws = float(ip['spoolWidth'])
     axleD = max(0.3, float(ip['spoolBore']) - SPOOL_AXLE_PLAY)
-    wireD = float(ip['wireDiameter'])
+    wireD = max(0.05, float(ip.get('spoolHoleDiameter') or ip['wireDiameter']))
     errors = []
 
-    end = SPOOL_COLLAR + SPOOL_COLLAR_GAP + 0.05          # collar room beside the outer posts
-    pitch = SPOOL_POST + Ws + 2 * SPOOL_PLAY
-    need = n * pitch + SPOOL_POST + 2 * end
+    play = max(0.0, float(ip['spoolPlay']))
+    div = max(MIN_SPOOL_WALL, float(ip['spoolDivider']))
+    endPost = max(MIN_SPOOL_WALL, float(ip['spoolEnd']))
+    collar = max(0.04, float(ip.get('axleCollar', SPOOL_COLLAR)))
+    endPlay = max(0.0, float(ip.get('axleEndPlay', SPOOL_COLLAR_GAP)))
+    collarRoom = collar + endPlay + 0.05                   # beside the outer posts
+    slotW = Ws + 2 * play                                  # space for one spool
+    span = 2 * endPost + (n - 1) * div + n * slotW         # end post to end post
+    need = span + 2 * collarRoom
     avail = px1 - px0
     if need > avail + 1e-9:
         errors.append('{} spool(s) need {:.0f} mm, {:.0f} mm free inside'.format(n, need * 10, avail * 10))
@@ -542,16 +682,37 @@ def spoolLayout(ins: dict) -> dict:
         errors.append('Drawer too short for this spool: needs {:.0f} mm inside depth'.format(
             (D + SPOOL_BACK_GAP + frontSpace) * 10))
 
-    x = (px0 + px1) / 2 - (need - 2 * end) / 2
-    posts = [(x + i * pitch, x + i * pitch + SPOOL_POST) for i in range(n + 1)]
-    centers = [x + SPOOL_POST + SPOOL_PLAY + Ws / 2 + i * pitch for i in range(n)]
-    holeZ = floorZ + max(0.5, wireD / 2 + 0.25)
+    # Posts: end support, (spool, divider)*, spool, end support.
+    x = (px0 + px1) / 2 - span / 2
+    posts, centers = [(x, x + endPost)], []
+    x += endPost
+    for i in range(n):
+        centers.append(x + slotW / 2)
+        x += slotW
+        thick = endPost if i == n - 1 else div
+        posts.append((x, x + thick))
+        x += thick
+
+    # Wire outlet height (the eyelet follows), kept inside the front.
+    wr = wireD / 2
+    lo, hi = floorZ + max(0.5, wr + 0.25), ins['z1'] - wr - 0.4
+    pos = ip.get('spoolHolePos', HOLE_BOTTOM)
+    base = {HOLE_BOTTOM: lo, HOLE_MIDDLE: zA, HOLE_TOP: zA + D / 2}.get(pos, lo)
+    holeZ = min(max(base + float(ip.get('spoolHoleOffset') or 0.0), lo), hi)
     return {
         'n': n, 'D': D, 'Ws': Ws, 'axleD': axleD, 'wireD': wireD,
         'zA': zA, 'yA': yA, 'floorZ': floorZ,
-        'posts': posts, 'centers': centers,
+        'posts': posts, 'centers': centers, 'play': play,
+        'snap': ip.get('spoolMount') == MOUNT_SNAP,
         'holeZ': holeZ, 'guideY': (py0 + spoolFront) / 2,
-        'axleX': (posts[0][0] - SPOOL_COLLAR - SPOOL_COLLAR_GAP, posts[-1][1] + SPOOL_COLLAR + SPOOL_COLLAR_GAP),
+        'axleX': (posts[0][0] - collar - endPlay, posts[-1][1] + collar + endPlay),
+        'endPlay': endPlay,
+        'fillet': max(0.0, float(ip.get('spoolFillet') or 0.0)),
+        'axleMode': ip.get('axleSplit', AXLE_BAYONET) if ip.get('axleSplit') in AXLE_SPLITS else AXLE_BAYONET,
+        'bayonet': ip.get('axleSplit', AXLE_BAYONET) != AXLE_ONE_PIECE,
+        # One piece: the end without collar reaches towards the side wall.
+        'plainEnd': (min(posts[-1][1] + float(ip.get('axleEndLength') or 0.0), px1 - endPlay)
+                     if float(ip.get('axleEndLength') or 0.0) > 0 else px1 - endPlay),
         'errors': errors,
     }
 

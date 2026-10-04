@@ -140,10 +140,17 @@ def gridFeet(des, p: dict, partial: dict, outline, radius: float):
             _translate(f, i * p['baseW'], j * p['baseL'])
             feet.append(f)
     feet = _unionAll(feet)
-    if eL or eR or eF or eB:
-        x0, x1, y0, y1 = outline
-        window = _roundedSlab(x0, x1, y0, y1, -10.0, 10.0, radius)
-        _tmgr().booleanOperation(feet, window, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+    # The foot is built xy-clearance larger than its cell (like a bin's); a
+    # bin trims that afterwards. Trim to the footprint (0..aW, 0..aL), or to
+    # the extended outline on sides with a partial cell, so the feet never
+    # stick out past the walls.
+    x0, x1, y0, y1 = outline
+    cl = float(p['cl'])
+    aW = int(p['unitsW']) * float(p['baseW']) - 2 * cl
+    aL = int(p['unitsL']) * float(p['baseL']) - 2 * cl
+    window = _roundedSlab(x0 if eL else 0.0, x1 if eR else aW,
+                          y0 if eF else 0.0, y1 if eB else aL, -10.0, 10.0, radius)
+    _tmgr().booleanOperation(feet, window, adsk.fusion.BooleanTypes.IntersectionBooleanType)
     return feet
 
 
@@ -204,14 +211,17 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
                     _translate(tool, i * p['baseW'], j * p['baseL'], cab['zTop'])
                     holes.append(tool)
         if p['wallMount']:
-            cols = cab['columns']
-            xs = sorted({(cols[0][0] + cols[0][1]) / 2, (cols[-1][0] + cols[-1][1]) / 2})
-            z = cab['ceil'] - 1.0
+            # Screw from the inside, head flush with the inside of the back
+            # wall (the back wall is thick enough, see cabinetLayout).
+            sc = L.mountScrew(p)
             yIn = cab['innerBack']
-            for x in xs:
-                holes.append(_cylinderAxis((x, yIn - _EPS, z), (x, back + 0.1, z), 0.225))
-                head = min(0.2, cab['backWall'])
-                holes.append(_cone((x, yIn - _EPS, z), 0.425 + _EPS, (x, yIn + head, z), 0.425 - head))
+            for x, z in L.mountHoles(cab):
+                holes.append(_cylinderAxis((x, yIn - _EPS, z), (x, back + 0.1, z), sc['holeR']))
+                if sc['countersunk']:
+                    holes.append(_cone((x, yIn - _EPS, z), sc['headR'] + _EPS,
+                                       (x, yIn + sc['depth'], z), sc['headR'] - sc['depth']))
+                else:
+                    holes.append(_cylinderAxis((x, yIn - _EPS, z), (x, yIn + sc['depth'], z), sc['headR']))
         if holes:
             _subtract(body, _unionAll(holes))
 
@@ -316,9 +326,11 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
             # Wire outlets sit in front of each spool, low above the floor.
             for xc in spools['centers']:
                 _wireHole(xc, spools['holeZ'], spools['wireD'] / 2, yF, yB, cuts)
-            spoolAdds, axle = _spoolParts(spools, bool(ip['spoolGuides']))
+            spoolAdds, axles = _spoolParts(spools, bool(ip['spoolGuides']))
             adds.extend(spoolAdds)
-            extraParts.append(axle)
+            extraParts.extend(axles)
+            if ip.get('showSpools'):
+                extraParts.append(_unionAll([spoolBody(spools, c) for c in spools['centers']]))
         else:
             _wireHoles(ip, band, ([handleX] if handleX else []) + blocked, yF, yB, cuts)
         if adds:
@@ -347,6 +359,13 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
         if cuts:
             _subtract(body, _unionAll(cuts))
 
+        if spools is not None and spools['fillet'] > 0:
+            import json
+            key = json.dumps([cabParams, {k: v for k, v in ip.items() if k != 'pullOut'}],
+                             sort_keys=True, default=str)
+            body = filletPostFeet(des, body, spools.get('footprints', []), spools['floorZ'],
+                                  spools['fillet'], key)
+
         parts = [body] + extraParts
         pull = float(ip.get('pullOut', 0.0))
         if pull:
@@ -374,64 +393,90 @@ def handleHalfWidth(ip, frontW):
 def frontLayout(ip, fx0, fx1, fz0, fz1):
     """(labelRect or None, handleBand, blockedX) on the front face.
 
-    The label goes below / above the handle when the front is high enough for
-    both, otherwise beside it (handle stays centred). 'Auto' picks for you.
-    blockedX: x ranges taken by the label (wire outlets keep clear)."""
+    Positions form a 3 x 3 grid (top / middle / bottom x left / center /
+    right). Top and bottom row: the label sits at that edge and the handle
+    gets the rest of the height. Middle row: aligned to the left / right edge
+    (with a handle only up to the handle), or centred. 'Auto' puts the label
+    below the handle if the front is high enough, else left of it; without a
+    handle it is centred. labelOffsetX / Z shift the label afterwards (kept on
+    the front). blockedX: x ranges the label takes (wire outlets keep clear)."""
     W, H = fx1 - fx0, fz1 - fz0
-    xc = (fx0 + fx1) / 2
+    xc, zc = (fx0 + fx1) / 2, (fz0 + fz1) / 2
     band = (fx0, fx1, fz0, fz1)
     if ip['label'] == L.LABEL_NONE:
         return None, band, []
     frame = CARD_FRAME if ip['label'] == L.LABEL_CARD else 0.0
+    m = LABEL_MARGIN + frame                      # label edge to front edge
     pos = ip['labelPos']
+    hasHandle = ip['handle'] != L.HANDLE_NONE
     notch = ip['handle'] == L.HANDLE_NOTCH
-    needHandle = 0.0 if ip['handle'] == L.HANDLE_NONE else max(1.0, float(ip['handleHeight'])) + 0.4
+    needHandle = max(1.0, float(ip['handleHeight'])) + 0.4 if hasHandle else 0.0
     lhWanted = float(ip['labelHeight'])
+    stacked = H >= needHandle + lhWanted + 2 * frame + LABEL_MARGIN + 0.2
     spoolDrawer = ip.get('interior') == L.INTERIOR_SPOOLS and ip.get('insertType') != L.INSERT_BLANK
-    if spoolDrawer and pos in (L.LABEL_AUTO, L.LABEL_BOTTOM):
-        # Wire outlets sit low in front of the spools: keep the label up.
-        stacked = H >= needHandle + lhWanted + 2 * frame + LABEL_MARGIN + 0.2
-        pos = L.LABEL_TOP if stacked else L.LABEL_LEFT
-    if pos == L.LABEL_AUTO:
-        stacked = H >= needHandle + lhWanted + 2 * frame + LABEL_MARGIN + 0.2
-        pos = L.LABEL_BOTTOM if stacked else L.LABEL_LEFT
-    if notch and pos == L.LABEL_TOP:
-        pos = L.LABEL_BOTTOM
-    if ip['handle'] == L.HANDLE_KNOB and pos in (L.LABEL_BOTTOM, L.LABEL_TOP):
-        # The knob's stand goes down to the bottom edge.
-        pos = L.LABEL_LEFT
+    if pos not in L.LABEL_GRID:
+        if spoolDrawer:
+            # Wire outlets usually sit low in front of the spools.
+            pos = L.LABEL_TOP if stacked else L.LABEL_LEFT
+        elif not hasHandle:
+            pos = L.LABEL_CENTER
+        else:
+            pos = L.LABEL_BOTTOM if stacked else L.LABEL_LEFT
+    row, col = L.LABEL_GRID[pos]
+    if hasHandle and notch and row == 'top':
+        row = 'bottom'                            # the notch is cut from the top
+    if ip['handle'] == L.HANDLE_KNOB and row != 'middle':
+        row = 'middle'                            # the knob's stand reaches the bottom
+        col = 'left' if col == 'center' else col
 
-    if pos in (L.LABEL_BOTTOM, L.LABEL_TOP):
+    def alignX(lw, a, b):
+        """x0 of a label lw wide in [a, b] for the column."""
+        if col == 'left':
+            return a
+        if col == 'right':
+            return b - lw
+        return (a + b) / 2 - lw / 2
+
+    blocked = False
+    if row in ('top', 'bottom'):
         lh = max(0.4, min(lhWanted, H * 0.45))
-        lw = max(0.6, min(float(ip['labelWidth']), W - 2 * frame - 0.4))
-        if pos == L.LABEL_TOP:
+        lw = max(0.6, min(float(ip['labelWidth']), W - 2 * m))
+        if row == 'top':
             lz1 = fz1 - LABEL_MARGIN
             lz0 = lz1 - lh
             band = (fx0, fx1, fz0, lz0 - frame - 0.1)
         else:
-            lz0 = fz0 + LABEL_MARGIN + frame
+            lz0 = fz0 + m
             lz1 = lz0 + lh
             band = (fx0, fx1, lz1 + 0.1, fz1)
-        return (xc - lw / 2, xc + lw / 2, lz0, lz1), band, []
+        x0 = alignX(lw, fx0 + m, fx1 - m)
+        rect = (x0, x0 + lw, lz0, lz1)
+    else:
+        lh = max(0.4, min(lhWanted, H - 2 * m))
+        if col == 'center':
+            a, b = fx0 + m, fx1 - m
+        elif hasHandle:
+            # Beside the handle: between the front edge and the handle.
+            half = handleHalfWidth(ip, W) + 0.3
+            a, b = (fx0 + m, xc - half - frame) if col == 'left' else (xc + half + frame, fx1 - m)
+        else:
+            a, b = fx0 + m, fx1 - m
+        if b - a < 0.6:
+            return None, band, []
+        lw = min(float(ip['labelWidth']), b - a)
+        lz0 = fz0 + m if notch else zc - lh / 2
+        x0 = alignX(lw, a, b)
+        rect = (x0, x0 + lw, lz0, lz0 + lh)
+        blocked = True
 
-    # Beside the handle: centred in the free part left / right of it.
-    half = handleHalfWidth(ip, W) + 0.3
-    if pos == L.LABEL_LEFT:
-        a, b = fx0 + LABEL_MARGIN + frame, xc - half - frame
-    else:
-        a, b = xc + half + frame, fx1 - LABEL_MARGIN - frame
-    if b - a < 0.6:
-        return None, band, []
-    lw = min(float(ip['labelWidth']), b - a)
-    lh = max(0.4, min(lhWanted, H - 2 * LABEL_MARGIN - 2 * frame))
-    if notch:
-        # Notch is cut from the top; keep the label low.
-        lz0 = fz0 + LABEL_MARGIN + frame
-    else:
-        lz0 = (fz0 + fz1) / 2 - lh / 2
-    cx = (a + b) / 2
-    rect = (cx - lw / 2, cx + lw / 2, lz0, lz0 + lh)
-    return rect, band, [(rect[0] - frame - 0.2, rect[1] + frame + 0.2)]
+    # Offset, clamped so the label (and a card holder's frame) stays on the front.
+    mo = LABEL_MARGIN * 0.5 + frame
+    dx = float(ip.get('labelOffsetX') or 0.0)
+    dz = float(ip.get('labelOffsetZ') or 0.0)
+    dx = min(max(dx, fx0 + mo - rect[0]), fx1 - mo - rect[1])
+    dz = min(max(dz, fz0 + mo - rect[2]), fz1 - mo - rect[3])
+    rect = (rect[0] + dx, rect[1] + dx, rect[2] + dz, rect[3] + dz)
+    return rect, band, ([(rect[0] - frame - 0.2, rect[1] + frame + 0.2)] if blocked else [])
 
 
 def _label(ip, rect, yF, adds, cuts):
@@ -451,6 +496,75 @@ def _label(ip, rect, yF, adds, cuts):
     adds.append(holder)
 
 
+SPOOL_PREVIEW_NAME = 'spools (preview, not for printing)'
+
+
+def insertPartNames(insertParams: dict):
+    """Names of the extra bodies buildInsertParts returns after the insert."""
+    ip = L.withDefaults(insertParams, L.INSERT_DEFAULTS)
+    if ip['interior'] != L.INTERIOR_SPOOLS or ip['insertType'] == L.INSERT_BLANK:
+        return []
+    axles = ['axle'] if ip.get('axleSplit') == L.AXLE_ONE_PIECE else ['axle A (peg)', 'axle B (socket)']
+    return axles + ([SPOOL_PREVIEW_NAME] if ip.get('showSpools') else [])
+
+
+def spoolBody(sp, xc):
+    """Stand-in for one spool (outer diameter x width, with its bore)."""
+    half = sp['Ws'] / 2
+    spool = _cylinderAxis((xc - half, sp['yA'], sp['zA']), (xc + half, sp['yA'], sp['zA']), sp['D'] / 2)
+    boreR = (sp['axleD'] + L.SPOOL_AXLE_PLAY) / 2
+    _subtract(spool, _cylinderAxis((xc - half - 0.1, sp['yA'], sp['zA']), (xc + half + 0.1, sp['yA'], sp['zA']), boreR))
+    return spool
+
+
+def _overlaps(a, b) -> bool:
+    """True if two temp bodies share volume (boolean intersection not empty)."""
+    try:
+        probe = _tmgr().copy(a)
+        _tmgr().booleanOperation(probe, _tmgr().copy(b), adsk.fusion.BooleanTypes.IntersectionBooleanType)
+        return probe.faces.count > 0
+    except Exception:
+        return False
+
+
+def spoolProblems(des, cabParams: dict, insertParams: dict):
+    """Messages for spools that do not fit: size checks from the layout plus
+    a real collision test of every spool against the finished drawer."""
+    cab = L.cabinet(cabParams)
+    ins = L.insert(cab, insertParams)
+    sp = ins.get('spools')
+    if sp is None:
+        return []
+    if sp['errors']:
+        return list(sp['errors'])
+    # No floor fillet here: this runs while the user types (no scratch features).
+    ip = dict(ins['p'], pullOut=0.0, showSpools=False, spoolFillet=0.0)
+    drawer = buildInsertParts(des, cabParams, ip)[0]
+    # The recessed pull's housing reaches deep into the drawer: name it.
+    housing = None
+    if ip['handle'] == L.HANDLE_RECESS:
+        frontT = float(ip['front'])
+        if ins['panel'] is not None:
+            pn = ins['panel']
+            front, yF, yB = (pn['x0'], pn['x1'], pn['z0'], pn['z1']), pn['y0'], pn['y1']
+        else:
+            front, yF, yB = (ins['x0'], ins['x1'], ins['z0'], ins['z1']), ins['y0'], ins['y0'] + frontT
+        _, band, _ = frontLayout(ip, *front)
+        adds, cuts = [], []
+        _handle(ip, band, front, yF, yB, ins['z0'], ins['z1'], float(ip['wall']), adds, cuts)
+        housing = adds[0] if adds else None
+    problems = []
+    for k, xc in enumerate(sp['centers']):
+        spool = spoolBody(sp, xc)
+        if housing is not None and _overlaps(spool, housing):
+            problems.append(f'Spool {k + 1} hits the recessed pull: use another handle, '
+                            f'a narrower handle or a smaller spool')
+        elif _overlaps(spool, drawer):
+            problems.append(f'Spool {k + 1} touches the drawer (wall, guide or cradle): '
+                            f'check diameter, width and bore')
+    return problems
+
+
 def _wireHole(x, z, rad, yF, yB, cuts):
     """One wire outlet through the front, chamfered on the outside."""
     cuts.append(_cylinderAxis((x, yF - 0.1, z), (x, yB + _EPS, z), rad))
@@ -468,11 +582,18 @@ def _spoolParts(sp, guides: bool):
     r = sp['axleD'] / 2
     yA, zA, floorZ = sp['yA'], sp['zA'], sp['floorZ']
     slotR = r + 0.03
+    # Snap-in: the cradle reaches over the axle and its opening is narrower
+    # than the axle (lips), so the axle clicks in. Open: plain U, lay it in.
+    top = zA + r + 0.15 if sp['snap'] else zA + r * 0.6
+    opening = r - L.SPOOL_SNAP if sp['snap'] else slotR
+    sp['footprints'] = []
     for xa, xb in sp['posts']:
-        post = _box(xa, xb, yA - slotR - L.SPOOL_POST, yA + slotR + L.SPOOL_POST, floorZ - _EPS, zA + r * 0.6)
+        y0, y1 = yA - slotR - L.SPOOL_POST, yA + slotR + L.SPOOL_POST
+        post = _box(xa, xb, y0, y1, floorZ - _EPS, top)
         _subtract(post, _cylinderAxis((xa - 0.1, yA, zA), (xb + 0.1, yA, zA), slotR))
-        _subtract(post, _box(xa - 0.1, xb + 0.1, yA - slotR, yA + slotR, zA, zA + 5.0))
+        _subtract(post, _box(xa - 0.1, xb + 0.1, yA - opening, yA + opening, zA, zA + 5.0))
         adds.append(post)
+        sp.setdefault('footprints', []).append((xa, xb, y0, y1))
     if guides:
         wr = sp['wireD'] / 2
         gy, hz = sp['guideY'], sp['holeZ']
@@ -480,15 +601,163 @@ def _spoolParts(sp, guides: bool):
             guide = _box(xc - 0.4, xc + 0.4, gy - 0.15, gy + 0.15, floorZ - _EPS, hz + wr + 0.3)
             _subtract(guide, _cylinderAxis((xc, gy - 1.0, hz), (xc, gy + 1.0, hz), wr + 0.05))
             adds.append(guide)
+            sp.setdefault('footprints', []).append((xc - 0.4, xc + 0.4, gy - 0.15, gy + 0.15))
 
+    return adds, _axleParts(sp)
+
+
+# Floor fillets are made by a real Fusion fillet (constant radius, tangent
+# chain, rolling ball corners) in a scratch component; cached per drawer.
+_filletCache = {}
+
+
+def filletPostFeet(des, body, footprints, zFloor: float, radius: float, key=None):
+    """Body with a fillet where posts (footprints x0, x1, y0, y1) meet the
+    floor at zFloor. Uses Fusion's fillet feature in a scratch component, so
+    the result is exactly a manual fillet. Returns the input on failure."""
+    if des is None or radius <= 0 or not footprints:
+        return body
+    if key is not None:
+        cached = _filletCache.get(key)
+        if cached is not None:
+            try:
+                if cached.faces.count > 0:
+                    return _tmgr().copy(cached)
+            except Exception:
+                pass
+    from . import scratchUtils
+
+    def onFoot(pt):
+        if abs(pt.z - zFloor) > 1e-4:
+            return False
+        tol = 1e-3
+        return any(x0 - tol <= pt.x <= x1 + tol and y0 - tol <= pt.y <= y1 + tol
+                   for x0, x1, y0, y1 in footprints)
+
+    result = body
+    startCount = des.timeline.count
+    try:
+        with gplog.timed('floor fillet (parametric)'):
+            scratch = scratchUtils.createScratchComponent(des)
+            baseFeat = scratch.features.baseFeatures.add()
+            baseFeat.startEdit()
+            scratch.bRepBodies.add(body, baseFeat)
+            baseFeat.finishEdit()
+            target = baseFeat.bodies.item(0)
+            edges = adsk.core.ObjectCollection.create()
+            for edge in target.edges:
+                bb = edge.boundingBox
+                if abs(bb.minPoint.z - zFloor) > 1e-4 or abs(bb.maxPoint.z - zFloor) > 1e-4:
+                    continue
+                if onFoot(edge.pointOnEdge):
+                    edges.add(edge)
+            if edges.count:
+                fillets = scratch.features.filletFeatures
+                fin = fillets.createInput()
+                fin.isRollingBallCorner = True
+                fin.edgeSetInputs.addConstantRadiusEdgeSet(edges, adsk.core.ValueInput.createByReal(radius), True)
+                fillets.add(fin)
+                own = scratchUtils.ownBodies(scratch)
+                result = _tmgr().copy(own[0] if own else target)
+            gplog.log(f'floor fillet: {edges.count} edges, r={radius}')
+    except Exception:
+        gplog.logExc('floor fillet')
+        result = body
+    finally:
+        lastIndex = des.timeline.count - 1
+        if lastIndex >= startCount:
+            des.timeline.timelineGroups.add(startCount, lastIndex).deleteMe(True)
+        scratchUtils.release()
+    if key is not None and result is not body:
+        if len(_filletCache) > 8:
+            _filletCache.clear()
+        _filletCache[key] = _tmgr().copy(result)
+    return result
+
+
+# Bayonet joint in the middle of the axle (sizes relative to the axle radius).
+BAYONET_PEG = 0.55          # peg radius / axle radius
+BAYONET_PLAY = 0.02         # radial play peg / socket
+BAYONET_LUG_LEN = 0.15      # lug length along the axle
+BAYONET_LUG_W = 0.25        # lug width (around the axle)
+BAYONET_SKIN = 0.08         # 'smooth outside': wall left outside the groove
+
+
+def _axleParts(sp):
+    """Axle bodies. Bayonet: two halves, each with one collar, printed
+    standing on that collar; half A carries a peg with two lugs, half B a
+    socket with two L-slots (push in, turn a quarter, locked). One piece: a
+    single collar (spools slide on from the other end), printed lying on a
+    flat."""
+    r = sp['axleD'] / 2
+    yA, zA = sp['yA'], sp['zA']
     xa, xb = sp['axleX']
-    axle = _cylinderAxis((xa, yA, zA), (xb, yA, zA), r)
     rc = r + 0.25
     pa, pb = sp['posts'][0][0], sp['posts'][-1][1]
-    _union(axle, _cylinderAxis((xa, yA, zA), (pa - L.SPOOL_COLLAR_GAP, yA, zA), rc))
-    _union(axle, _cylinderAxis((pb + L.SPOOL_COLLAR_GAP, yA, zA), (xb, yA, zA), rc))
-    _subtract(axle, _box(xa - 1, xb + 1, yA - rc - 1, yA + rc + 1, zA - rc - 1, zA - r * 0.85))
-    return adds, axle
+
+    def rod(x0, x1, radius):
+        return _cylinderAxis((x0, yA, zA), (x1, yA, zA), radius)
+
+    if not sp['bayonet']:
+        # Collar on one side; the other end runs on towards the side wall so
+        # the axle cannot slide out there.
+        axle = rod(xa, max(xb, sp['plainEnd']), r)
+        _union(axle, rod(xa, pa - sp['endPlay'], rc))
+        _subtract(axle, _box(xa - 1, xb + 1, yA - rc - 1, yA + rc + 1, zA - rc - 1, zA - r * 0.85))
+        return [axle]
+
+    xm = (xa + xb) / 2
+    smooth = sp['axleMode'] == L.AXLE_BAYONET_SMOOTH
+    pegLen = max(0.8, 2 * r)
+    lugHi = xm + pegLen - 0.1
+    lugLo = lugHi - BAYONET_LUG_LEN
+    w = BAYONET_LUG_W
+    if smooth:
+        # Slots and groove stay inside the socket wall: keep an outer skin.
+        rp = r * 0.5
+        lugOut = min(rp + (r - rp) * 0.5, r - BAYONET_SKIN - 0.02)
+        cutR = lugOut + 0.02          # how far the slots / groove reach out
+    else:
+        rp = r * BAYONET_PEG
+        lugOut = rp + (r - rp) * 0.7
+        cutR = r + 0.1                # through the wall
+
+    # Half A: collar, shaft to the middle, peg with two lugs (+y and -y).
+    halfA = rod(xa, xm, r)
+    _union(halfA, rod(xa, pa - sp['endPlay'], rc))
+    _union(halfA, rod(xm - _EPS, xm + pegLen, rp))
+    for sgn in (1, -1):
+        lug = _box(lugLo, lugHi, yA + sgn * (rp - 0.02) if sgn > 0 else yA - lugOut,
+                   yA + lugOut if sgn > 0 else yA - (rp - 0.02), zA - w / 2, zA + w / 2)
+        # 45° underside (towards collar A) so it prints standing on the collar.
+        _cutHalfSpace(lug, (lugLo, yA + sgn * rp, zA), (-1, sgn, 0))
+        _union(halfA, lug)
+
+    # Half B: shaft from the middle, collar, socket with L-slots.
+    halfB = rod(xm, xb, r)
+    _union(halfB, rod(pb + sp['endPlay'], xb, rc))
+    _subtract(halfB, rod(xm - 0.1, xm + pegLen + 0.05, rp + BAYONET_PLAY))
+    m = w / 2 + 0.03
+    for sgn in (1, -1):
+        # Axial entry slot at the lug, through the socket wall.
+        _subtract(halfB, _box(xm - 0.1, lugHi + 0.03,
+                              yA + sgn * (rp - 0.05) if sgn > 0 else yA - cutR,
+                              yA + cutR if sgn > 0 else yA - (rp - 0.05), zA - m, zA + m))
+        # Quarter-turn groove: from the lug's entry (+-y) to +-z. Its wall
+        # towards the socket mouth is a 45° cone, parallel to the lug's
+        # chamfer: it holds the lug and prints as a 45° ceiling.
+        # Cone radius rp + (x - lugLo + 0.03): 0.3 mm in front of the lug face.
+        x0 = lugLo - 0.03 - 0.05
+        d = cutR - (rp - 0.05)
+        reach = _cone((x0, yA, zA), rp - 0.05, (x0 + d, yA, zA), rp - 0.05 + d)
+        _union(reach, rod(x0 + d - _EPS, lugHi + 0.03 + d, cutR))
+        groove = rod(x0, lugHi + 0.03, cutR)
+        _tmgr().booleanOperation(groove, reach, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+        _subtract(groove, rod(lugLo - 0.1, lugHi + 0.1, rp - 0.05))
+        _cutHalfSpace(groove, (0, yA - sgn * m, 0), (0, -sgn, 0))
+        _cutHalfSpace(groove, (0, 0, zA - sgn * m), (0, 0, -sgn))
+        _subtract(halfB, groove)
+    return [halfA, halfB]
 
 
 def _wireHoles(ip, band, blocked, yF, yB, cuts):

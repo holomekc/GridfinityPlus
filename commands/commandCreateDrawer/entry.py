@@ -13,6 +13,7 @@ Double-click the timeline node to edit.
 """
 
 import adsk.core, adsk.fusion, traceback
+import json
 import os
 
 from ...lib import fusion360utils as futil
@@ -39,7 +40,9 @@ ICON_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resource
 
 IN_CABINET = 'cabinet'
 IN_FILL = 'fill'
-IN_INFO = 'info'
+IN_RESULT = 'result'
+RESULT_KEYS = ('Outside', 'Inside', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
+               'Spool play floor/top', 'Spool slot', 'Axle', 'Inserts')
 FILL_ONE = 'This slot'
 FILL_COLUMN = 'Whole column'
 FILL_ALL = 'All slots'
@@ -222,9 +225,15 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.choice(g, 'label', 'Label', p, L.LABEL_TYPES,
                 'Sticker recess: 0.3 mm deep field, sticker sits flush.\n'
                 'Card holder: slide a paper card in from the top.')
-    form.choice(g, 'labelPos', 'Label position', p, L.LABEL_POSITIONS)
+    form.choice(g, 'labelPos', 'Label position', p, L.LABEL_POSITIONS,
+                '3 x 3 grid on the front. Top / bottom row: the label sits at that edge, the handle uses '
+                'the rest of the height. Middle row: at the left / right edge (with a handle up to the '
+                'handle) or centred. Auto: below the handle if the front is high enough, else left of '
+                'it; centred without a handle.')
     form.length(g, 'labelWidth', 'Label width', p, units, minimum=0.6)
     form.length(g, 'labelHeight', 'Label height', p, units, minimum=0.4)
+    form.offset(g, 'labelOffsetX', 'Label offset X', p, units, 'Shift right (+) / left (-), stays on the front')
+    form.offset(g, 'labelOffsetZ', 'Label offset Z', p, units, 'Shift up (+) / down (-), stays on the front')
     form.integer(g, 'wireHoles', 'Wire outlets', p, 0, 4,
                  'Holes beside the handle to pull wire / filament from a spool inside')
     form.length(g, 'wireDiameter', 'Outlet diameter', p, units, minimum=0.2, maximum=2.0)
@@ -242,8 +251,40 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
                 tooltip='Diameter of the hole in the spool; the axle is made slightly thinner')
     form.boolean(g, 'spoolGuides', 'Wire guides', p,
                  'Eyelet between each spool and its outlet in the front')
+    form.length(g, 'spoolPlay', 'Side play per spool', p, units, minimum=0.0, maximum=1.0,
+                tooltip='Gap between the spool and the divider on each side')
+    form.length(g, 'spoolDivider', 'Divider thickness', p, units, minimum=L.MIN_SPOOL_WALL, maximum=1.0,
+                tooltip='Cradles between the spools')
+    form.length(g, 'spoolEnd', 'End support thickness', p, units, minimum=L.MIN_SPOOL_WALL, maximum=1.0,
+                tooltip='The two outer cradles')
+    form.choice(g, 'spoolMount', 'Axle mount', p, L.SPOOL_MOUNTS,
+                'Open: lay the axle into an open U.\nSnap-in: the cradle reaches over the axle with two '
+                'lips (0.3 mm overlap each); press the axle in, it clicks.')
+    form.choice(g, 'spoolHolePos', 'Outlet height', p, L.HOLE_POSITIONS,
+                'Height of the wire outlets in the front (and the eyelets): at the floor, at the axle or '
+                'at the top of the spool')
+    form.offset(g, 'spoolHoleOffset', 'Outlet offset', p, units, 'Move the outlets up (+) / down (-)')
+    form.choice(g, 'axleSplit', 'Axle', p, L.AXLE_SPLITS,
+                'Bayonet: two halves, each printed standing on its collar; push together, turn a quarter.\n'
+                'Bayonet, smooth outside: same, but slots and groove stay inside, the axle is smooth outside.\n'
+                'One piece: one collar, printed lying down; spools slide on from the other end, which runs '
+                'on towards the side wall (Axle end length).')
+    form.length(g, 'spoolFillet', 'Fillet at the floor', p, units, minimum=0.0, maximum=1.0,
+                tooltip='Round fillet where the cradles and eyelet posts meet the floor (0 = off)')
+    form.length(g, 'axleEndLength', 'Axle end length', p, units, minimum=0.0,
+                tooltip='One piece: how far the end without collar runs past the end support. '
+                        '0 = up to the side wall (minus the end play), so the axle cannot slide out.')
+    form.length(g, 'axleEndPlay', 'Axle end play', p, units, minimum=0.0, maximum=1.0,
+                tooltip='Gap between each axle collar and the outer support (how far the axle can slide)')
+    form.length(g, 'axleCollar', 'Axle collar thickness', p, units, minimum=0.04, maximum=1.0,
+                tooltip='Collars at both axle ends keep the axle in its cradles')
+    form.length(g, 'spoolHoleDiameter', 'Outlet diameter', p, units, minimum=0.05, maximum=2.0,
+                tooltip='Wire outlet in the front and eyelet; about 2-2.5 mm for AWG 26-30')
+    form.boolean(g, 'showSpools', 'Show spools in model', p,
+                 'Also draw the spools as a separate body (planning only, not for printing; '
+                 'hide or delete it, or switch this off when editing). Also shows them in the preview.')
 
-    inputs.addTextBoxCommandInput(IN_INFO, 'Result', '', 5, True)
+    form.resultGroup(inputs, IN_RESULT, 'Result', RESULT_KEYS)
 
     _onCabinetChanged(inputs)
     _syncVisibility(inputs)
@@ -305,8 +346,11 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'interior', drawer)
     compartments = drawer and p['interior'] == L.INTERIOR_COMPARTMENTS
     spools = drawer and p['interior'] == L.INTERIOR_SPOOLS
-    for inputId in ('spoolCount', 'spoolDiameter', 'spoolWidth', 'spoolBore', 'spoolGuides'):
+    for inputId in ('spoolCount', 'spoolDiameter', 'spoolWidth', 'spoolBore', 'spoolGuides', 'showSpools',
+                    'spoolPlay', 'spoolDivider', 'spoolEnd', 'spoolMount', 'spoolHolePos', 'spoolHoleOffset',
+                    'spoolHoleDiameter', 'axleEndPlay', 'axleCollar', 'axleSplit', 'spoolFillet'):
         form.setVisible(inputs, inputId, spools)
+    form.setVisible(inputs, 'axleEndLength', spools and p.get('axleSplit') == L.AXLE_ONE_PIECE)
     # Spool drawers get one outlet per spool automatically.
     form.setVisible(inputs, 'wireHoles', not spools)
     form.setVisible(inputs, 'divX', compartments)
@@ -325,9 +369,27 @@ def _syncVisibility(inputs):
     for inputId in ('pullBar', 'pullTop', 'pullSides'):
         form.setVisible(inputs, inputId, kind == L.HANDLE_PULL)
     hasLabel = p['label'] != L.LABEL_NONE
-    for inputId in ('labelPos', 'labelWidth', 'labelHeight'):
+    for inputId in ('labelPos', 'labelWidth', 'labelHeight', 'labelOffsetX', 'labelOffsetZ'):
         form.setVisible(inputs, inputId, hasLabel)
-    form.setVisible(inputs, 'wireDiameter', int(p['wireHoles']) > 0 or spools)
+    form.setVisible(inputs, 'wireDiameter', int(p['wireHoles']) > 0 and not spools)
+
+
+_spoolCheck = {'key': None, 'problems': []}
+
+
+def _spoolIssues(des, cp, p):
+    """Collision check of the spools against the drawer (cached per input set)."""
+    if p.get('interior') != L.INTERIOR_SPOOLS:
+        return []
+    key = json.dumps([cp, p], sort_keys=True, default=str)
+    if _spoolCheck['key'] != key:
+        try:
+            _spoolCheck['problems'] = cabinetGeometry.spoolProblems(des, cp, p)
+        except Exception:
+            gplog.logExc('spool check')
+            _spoolCheck['problems'] = []
+        _spoolCheck['key'] = key
+    return _spoolCheck['problems']
 
 
 def _updateInfo(inputs):
@@ -335,6 +397,7 @@ def _updateInfo(inputs):
         _, cp, cab = _cabinet(inputs)
         if cab is None:
             return
+        des = adsk.fusion.Design.cast(app.activeProduct)
         p = _params(inputs)
         ins = L.insert(cab, p)
         mm = lambda v: '{:.1f}'.format(v * 10)
@@ -343,52 +406,58 @@ def _updateInfo(inputs):
         innerW = ins['x1'] - ins['x0'] - 2 * tw
         innerL = ins['y1'] - ins['y0'] - tw - frontT
         innerH = ins['z1'] - ins['z0'] - float(p['floor'])
-        lines = ['Outside: {} x {} x {} mm'.format(mm(ins['x1'] - ins['x0']),
-                                                   mm(ins['y1'] - ins['y0'] + (float(p['front']) if ins['overlay'] else 0)),
-                                                   mm(ins['z1'] - ins['z0']))]
-        lines.append('Inside: {} x {} x {} mm'.format(mm(innerW), mm(innerL), mm(innerH)))
+        values = {
+            'Outside': '{} x {} x {} mm'.format(
+                mm(ins['x1'] - ins['x0']),
+                mm(ins['y1'] - ins['y0'] + (float(p['front']) if ins['overlay'] else 0)),
+                mm(ins['z1'] - ins['z0'])),
+            'Inside': '{} x {} x {} mm'.format(mm(innerW), mm(innerL), mm(innerH)),
+        }
+        problems = list(ins['errors'])
         if p['interior'] == L.INTERIOR_GRID and not ins['blank']:
-            if p['handle'] == L.HANDLE_RECESS:
-                lines.append('Note: the recessed pull takes room at the front of the grid')
             nx, ny = L.gridCells(innerW, innerL, cp['baseW'], cp['baseL'], cp['cl'])
             if nx and ny:
-                lines.append('Gridfinity grid: {} x {} cells, bins up to {} mm high'.format(
-                    nx, ny, mm(innerH - 0.5)))
+                values['Gridfinity grid'] = '{} x {} cells, bins up to {} mm'.format(nx, ny, mm(innerH - 0.5))
+                if p['handle'] == L.HANDLE_RECESS:
+                    values['Gridfinity grid'] += ' (recessed pull takes room in front)'
             else:
-                lines.append('<font color="red">Too small for a Gridfinity cell - built empty</font>')
+                problems.append('Too small for a Gridfinity cell - built empty')
         if inputs.itemById(IN_FILL) and form.readOne(inputs.itemById(IN_FILL)) != FILL_ONE:
-            lines.append('Creates {} inserts'.format(len(_slots(inputs, cab, p))))
+            values['Inserts'] = str(len(_slots(inputs, cab, p)))
         if p['handle'] == L.HANDLE_LEDGE:
             if ins['overlay']:
                 fr = (ins['panel']['x0'], ins['panel']['x1'], ins['panel']['z0'], ins['panel']['z1'])
             else:
                 fr = (ins['x0'], ins['x1'], ins['z0'], ins['z1'])
-            _, band, _ = cabinetGeometry.frontLayout(L.withDefaults(p, L.INSERT_DEFAULTS), *fr)
-            ls = L.ledgeSize(L.withDefaults(p, L.INSERT_DEFAULTS), (band[3] - band[2]) - 0.2)
-            note = (' (raised: the groove needs it)' if ls['raised']
-                    else ' (limited by the front height)' if ls['capped'] else '')
-            lines.append('Ledge: {} mm high, sticks out {} mm, underside {:.0f}° from horizontal{}'.format(
-                mm(ls['H']), mm(ls['p']), ls['angle'], note))
+            full = L.withDefaults(p, L.INSERT_DEFAULTS)
+            _, band, _ = cabinetGeometry.frontLayout(full, *fr)
+            ls = L.ledgeSize(full, (band[3] - band[2]) - 0.2)
+            note = (' (raised for the groove)' if ls['raised']
+                    else ' (limited by the front)' if ls['capped'] else '')
+            values['Ledge'] = '{} mm high, {} mm out, {:.0f}°{}'.format(
+                mm(ls['H']), mm(ls['p']), ls['angle'], note)
         sp = ins.get('spools')
-        if sp is not None and not sp['errors']:
+        if sp is not None:
             maxD = (ins['z1'] - 0.1) - sp['floorZ'] - L.SPOOL_BOTTOM_GAP
-            lines.append('Spools: up to {} mm diameter fit, axle {} mm (printed as a separate body)'.format(
-                mm(maxD), mm(sp['axleD'])))
-            tw = float(p['wall'])
-            frontIn = ins['y0'] + (0.0 if ins['overlay'] else float(p['front']))
-            r = sp['D'] / 2
-            lines.append('Spool play: front {} / back {} / floor {} / top {} mm'.format(
-                mm(sp['yA'] - r - frontIn), mm(ins['y1'] - tw - sp['yA'] - r),
-                mm(sp['zA'] - r - sp['floorZ']), mm(ins['z1'] - sp['zA'] - r)))
-            if p['handle'] == L.HANDLE_RECESS:
-                half = float(p['handleWidth']) / 2 + float(p['wall'])
-                xc = (ins['x0'] + ins['x1']) / 2
-                if any(abs(x - xc) < half + 0.3 for x in sp['centers']):
-                    lines.append('<font color="red">The recessed pull sits in front of a spool and blocks '
-                                 'its wire path - use a narrower or another handle</font>')
-        for e in ins['errors']:
-            lines.append(f'<font color="red">{e}</font>')
-        inputs.itemById(IN_INFO).formattedText = '<br>'.join(lines)
+            values['Spool max Ø'] = '{} mm'.format(mm(maxD))
+            if not sp['errors']:
+                frontIn = ins['y0'] + frontT
+                r = sp['D'] / 2
+                values['Spool play front/back'] = '{} / {} mm'.format(
+                    mm(sp['yA'] - r - frontIn), mm(ins['y1'] - tw - sp['yA'] - r))
+                values['Spool play floor/top'] = '{} / {} mm'.format(
+                    mm(sp['zA'] - r - sp['floorZ']), mm(ins['z1'] - sp['zA'] - r))
+                values['Axle'] = '{} mm, separate body'.format(mm(sp['axleD']))
+                values['Spool slot'] = '{} mm between cradles (spool {} + 2 x {} play)'.format(
+                    mm(sp['Ws'] + 2 * sp['play']), mm(sp['Ws']), mm(sp['play']))
+                problems.extend(_spoolIssues(des, cp, p))
+                if p['handle'] == L.HANDLE_RECESS:
+                    half = float(p['handleWidth']) / 2 + tw
+                    xc = (ins['x0'] + ins['x1']) / 2
+                    if any(abs(x - xc) < half + 0.3 for x in sp['centers']):
+                        problems.append('The recessed pull blocks the wire path of a spool: '
+                                        'use a narrower or another handle')
+        form.setResults(inputs, IN_RESULT, values, problems)
     except Exception:
         gplog.logExc('insert info')
 
@@ -396,9 +465,11 @@ def _updateInfo(inputs):
 def command_input_changed(args: adsk.core.InputChangedEventArgs):
     # args.inputs only holds the changed input's group; use the whole dialog.
     inputs = args.firingEvent.sender.commandInputs
+    if form.isResultInput(IN_RESULT, args.input.id):
+        return  # our own read-only result lines
     if args.input.id in (IN_CABINET, 'column', 'row', 'span'):
         _onCabinetChanged(inputs)
-    if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles', 'spoolCount', 'ledgeHeight'):
+    if args.input.id in (IN_CABINET, 'insertType', 'frontStyle', 'interior', 'handle', 'label', 'wireHoles', 'spoolCount', 'ledgeHeight', 'axleSplit'):
         _syncVisibility(inputs)
     _updateInfo(inputs)
 
@@ -407,7 +478,10 @@ def command_validate(args: adsk.core.ValidateInputsEventArgs):
     try:
         inputs = args.firingEvent.sender.commandInputs
         _, cp, cab = _cabinet(inputs)
-        args.areInputsValid = cab is not None and not L.insert(cab, _params(inputs))['errors']
+        p = _params(inputs)
+        des = adsk.fusion.Design.cast(app.activeProduct)
+        args.areInputsValid = (cab is not None and not L.insert(cab, p)['errors']
+                               and not _spoolIssues(des, cp, p))
     except Exception:
         args.areInputsValid = False
 

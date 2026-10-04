@@ -25,7 +25,7 @@ def frange(a, b, st):
 cp = dict(L.CABINET_DEFAULTS, unitsW=3, unitsL=3, rows=1, heightUnits=14)
 cab = L.cabinet(cp)
 ip = dict(L.INSERT_DEFAULTS, interior=L.INTERIOR_SPOOLS, spoolCount=2, spoolDiameter=5.0,
-          spoolWidth=2.5, spoolBore=1.0, handle=L.HANDLE_PULL)
+          spoolWidth=2.5, spoolBore=1.0, handle=L.HANDLE_PULL, axleSplit=L.AXLE_ONE_PIECE)
 ins = L.insert(cab, ip)
 sp = ins['spools']
 print('errors', ins['errors'], 'centers', [round(c, 2) for c in sp['centers']], 'zA', round(sp['zA'], 2))

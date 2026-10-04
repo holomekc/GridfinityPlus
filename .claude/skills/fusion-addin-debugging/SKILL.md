@@ -34,6 +34,8 @@ changing code; most "regressions" on 2026-10-03 were not caused by the code.
   `event_utils` now also writes them to `gridfinityplus.log` (`event handler "…"`). Look there first.
 - **`InputChangedEventArgs.inputs`** only holds the changed input's group. Use
   `args.firingEvent.sender.commandInputs` (same for validateInputs).
+- **Command input ids must be ASCII** (letters, digits, `_`). A key like "Spool max Ø" turned into an id gave
+  "3 : invalid argument id" and killed the dialog. `t_dialogs.py` in `gridfinity-geometry-tests` catches it.
 - **`IntegerSpinnerCommandInput.maximumValue`** cannot be set after creation; clamp values instead.
 - **`entityToken`** strings of the same entity can differ; compare resolved entities
   (`des.findEntityByToken(token)` → `==`), see `boxSystemFeature.refersTo`.

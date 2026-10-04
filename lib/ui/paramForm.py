@@ -22,6 +22,12 @@ def length(parent: adsk.core.CommandInputs, inputId: str, label: str, params: di
     return inp
 
 
+def offset(parent: adsk.core.CommandInputs, inputId: str, label: str, params: dict,
+           units: str, tooltip: str = ''):
+    """Signed length (no limits), e.g. a position offset."""
+    return length(parent, inputId, label, params, units, tooltip=tooltip)
+
+
 def unitless(parent: adsk.core.CommandInputs, inputId: str, label: str, params: dict, tooltip: str = ''):
     inp = parent.addValueInput(inputId, label, '', adsk.core.ValueInput.createByReal(float(params[inputId])))
     if tooltip:
@@ -107,3 +113,54 @@ def selectChoice(inputs: adsk.core.CommandInputs, inputId: str, name: str):
         if item.name == name:
             item.isSelected = True
             return
+
+
+# ------------------------------------------------------------------ results
+
+def _resultId(groupId: str, key: str) -> str:
+    # Fusion only accepts ASCII ids ('Ø' in a key made the dialog fail).
+    return groupId + '_' + ''.join(ch if ch.isascii() and ch.isalnum() else '_' for ch in key)
+
+
+def resultGroup(inputs: adsk.core.CommandInputs, groupId: str, title: str, keys):
+    """A 'Result' group: one read-only 'key: value' line per key, plus a
+    problems box (red) that only shows when there are problems."""
+    group = inputs.addGroupCommandInput(groupId, title)
+    for key in keys:
+        line = group.children.addStringValueInput(_resultId(groupId, key), key, '')
+        line.isReadOnly = True
+        line.isVisible = False
+    problems = group.children.addTextBoxCommandInput(groupId + '_problems', 'Problems', '', 3, True)
+    problems.isVisible = False
+    return group
+
+
+def isResultInput(groupId: str, inputId: str) -> bool:
+    return inputId.startswith(groupId + '_')
+
+
+def setResults(inputs: adsk.core.CommandInputs, groupId: str, values: dict, problems=()):
+    """values: {key: text or None}; None / missing keys are hidden."""
+    group = adsk.core.GroupCommandInput.cast(inputs.itemById(groupId))
+    if group is None:
+        return
+    for i in range(group.children.count):
+        line = adsk.core.StringValueCommandInput.cast(group.children.item(i))
+        if line is None:
+            continue
+        text = None
+        for key, value in values.items():
+            if _resultId(groupId, key) == line.id:
+                text = value
+        visible = text is not None
+        if line.isVisible != visible:
+            line.isVisible = visible
+        if visible and line.value != text:
+            line.value = text
+    box = adsk.core.TextBoxCommandInput.cast(inputs.itemById(groupId + '_problems'))
+    if box is not None:
+        html = '<br>'.join(f'<font color="red">{p}</font>' for p in problems)
+        if box.isVisible != bool(problems):
+            box.isVisible = bool(problems)
+        if box.formattedText != html:
+            box.formattedText = html

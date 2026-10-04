@@ -63,8 +63,10 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 - Columns (vertical dividers) and rows (equal, or weighted like `1,1,2`).
 - Guides: **ledges** (inserts rest on shelf strips) or **grooves** (V-grooves, inserts carry runners; an insert can
   span several rows).
-- Optional click detent (adjustable bump height), wall mount holes, adjustable walls (1.2 mm default) and insert
-  clearances.
+- Optional click detent (adjustable bump height), adjustable walls (1.2 mm default) and insert clearances.
+- Wall mount: screw holes in the back wall for M2–M6, countersunk or pan / cheese head, 1–2 rows, 1–6 holes per row,
+  distances from the sides / top / bottom. The back wall gets just thick enough for the head to sit flush inside, so
+  the drawers still close (they get a little shorter).
 - Editing a cabinet rebuilds its inserts and the cabinets stacked on it.
 - Fills to edge over a plate's border / partial cells like bins. The top grid then repeats the partial cell (or stays
   flat), so bins on top can fill to the edge as well.
@@ -82,11 +84,19 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
   - *Top notch*, *finger hole*, *knob* (round, mushroom or spool with a U groove; on a stand, on thin breakaway fins
     or without support).
   - Position top / centre / bottom for protruding handles.
-- Label: sticker recess (flush) or card holder, placed below / above / beside the handle; *Auto* picks what fits.
+- Label: sticker recess (flush) or card holder on a 3 x 3 grid (top / middle / bottom x left / center / right) plus
+  an X / Z offset. *Auto* puts it below or beside the handle, or centres it when there is no handle.
 - Wire outlets: holes beside the handle.
 - Interior: empty, compartments, a Gridfinity grid for bins, or **spools** for wire: spools side by side on an axle
   across the drawer (axle is a separate body, printed lying flat, with collars), cradles with an open-top slot, an
-  eyelet per spool and a wire outlet in front of each spool.
+  eyelet per spool and a wire outlet in front of each spool. Adjustable: side play per spool, divider and end support
+  thickness, axle mount (open U or snap-in), outlet height (bottom / axle / top of the spool) with an offset and its
+  diameter, axle collar and end play, fillet where the cradles meet the floor. The axle comes in two halves joined by
+  a bayonet in the middle (push together, turn a quarter): each half prints standing on its collar, no overhang.
+  *Bayonet, smooth outside* keeps the slots inside, so the axle is smooth; *One piece* has one collar and its other
+  end runs on towards the side wall (adjustable length) so it can't slide out. Spools are centred in the drawer; every spool is checked
+  against the finished drawer (handle, guides, walls) and the dialog says which one does not fit. The preview always
+  shows the spools; *Show spools in model* also adds them as a separate body for planning (not for printing).
 - Pull-out stop (with the cabinet's detent) and *Show pulled out* for viewing.
 - Pick the slot by clicking the cabinet front, or fill a whole column or the whole cabinet in one go.
 
@@ -106,6 +116,8 @@ with design intent *Part*. Right-click the bin, plate, cabinet, drawer or cover 
 
 - **Clearer UI**: dialogs regrouped and renamed (Size, Placement, Grid unit, Style, Advanced; Width/Depth instead of
   X/Y). Bin columns/rows are 1-based.
+- **Result group** in the cabinet and drawer dialogs: key / value lines (outside, inside, spool play, …) and the
+  problems in red.
 - **Debug log**: the add-in writes `gridfinityplus.log` into its own folder. Handy for bug reports; safe to delete.
 
 ## Installation
