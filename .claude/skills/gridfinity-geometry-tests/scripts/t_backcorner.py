@@ -41,8 +41,8 @@ for guide in (L.GUIDE_LEDGE, L.GUIDE_GROOVE):
                 inner = (cx + dx * (R - wall * 0.9), cy + dy * (R - wall * 0.9), z)
                 check(f'{guide}: wall thick enough in the corner', body.contains(list(inner)), inner)
 
-    # Front corners: rounded with min(radius, wall).
-    rf = min(cab['radius'], cab['wall'])
+    # Front corners: as round as the feet and the top (Gridfinity radius).
+    rf = cab['radius']
     for sx, cx in ((1, cab['x0'] + rf), (-1, cab['x1'] - rf)):
         cy = cab['front'] + rf
         for deg in range(0, 91, 5):
@@ -64,17 +64,19 @@ for guide in (L.GUIDE_LEDGE, L.GUIDE_GROOVE):
         low = (cx - sx * (R - 0.03), cg['front'] + R, cg['ceil'] - 0.2)  # below: wall still there
         check(f'{guide}: wall below the grid layer kept', top.contains(list(low)), low)
 
-    # Border / partial cell in front: the grid layer keeps a square corner.
-    cpp = dict(cpg, ovh={'left': 1.0, 'right': 0, 'front': 1.0, 'back': 0,
-                         'partial': {'left': True, 'front': True}})
-    cpart = L.cabinet(cpp)
-    bp = G.buildCabinet(None, cpp)
-    rf2 = min(cpart['radius'], cpart['wall'])
-    pt = (cpart['x0'] + rf2 * 0.5, cpart['front'] + rf2 * 0.5, cpart['ceil'] + 0.02)
-    check(f'{guide}: partial front corner not rounded', bp.contains(list(pt)), pt)
-    k = rf2 - (rf2 - 0.005) / 2 ** 0.5           # just inside the small front radius
-    pt = (cpart['x1'] - k, cpart['front'] + k, cpart['zTop'] - 0.05)
-    check(f'{guide}: border in front -> right corner not rounded either', bp.contains(list(pt)), pt)
+    # Insert in the outer column: its front corner follows the cabinet's
+    # rounding and touches it in the front plane (nothing sticks out).
+    ipo = dict(L.INSERT_DEFAULTS, column=1, row=2)
+    inso = L.insert(cab, ipo)
+    dr = G.buildInsertParts(None, cp, ipo)[0]
+    zc = (inso['z0'] + inso['z1']) / 2
+    Rr = cab['radius']
+    for deg in range(0, 91, 10):
+        a = math.radians(deg)
+        p = (cab['x0'] + Rr - (Rr + 0.003) * math.cos(a), cab['front'] + Rr - (Rr + 0.003) * math.sin(a), zc)
+        check(f'{guide}: insert inside the rounded front corner', not dr.contains(list(p)), p)
+    check(f'{guide}: insert front flush at the corner end', dr.contains([cab['x0'] + Rr, cab['front'] + 0.01, zc]),
+          (cab['x0'] + Rr, cab['front'] + 0.01, zc))
 
     ip = dict(L.INSERT_DEFAULTS, column=1, row=1)
     drawer = G.buildInsertParts(None, cp, ip)[0]

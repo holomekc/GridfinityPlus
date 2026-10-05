@@ -44,16 +44,23 @@ class _ComputeHandler(adsk.fusion.CustomFeatureEventHandler):
             if baseFeat is None:
                 gplog.log(f'BOX COMPUTE: "{cf.name}" has no BaseFeature')
                 return
-            # Several bodies (e.g. drawer + spool axle); the count may change.
+            # Several bodies (e.g. cabinet + top plate, drawer + axles); the
+            # count may change. Match old and new by their part role, never
+            # by the order Fusion lists them in.
             new = pending['bodies']
             baseFeat.startEdit()
             old = [baseFeat.bodies.item(i) for i in range(baseFeat.bodies.count)]
+            byRole = {}
+            for i, body in enumerate(old):
+                byRole.setdefault(_role(body, i), body)
             for i, body in enumerate(new):
-                if i < len(old):
-                    baseFeat.updateBody(old[i], body)
+                target = byRole.pop(i, None)
+                if target is not None:
+                    baseFeat.updateBody(target, body)
+                    _setRole(target, i)          # bodies from before roles get one
                 else:
-                    cf.parentComponent.bRepBodies.add(body, baseFeat)
-            for body in old[len(new):]:
+                    _setRole(cf.parentComponent.bRepBodies.add(body, baseFeat), i)
+            for body in byRole.values():
                 body.deleteMe()
             baseFeat.finishEdit()
             _nameBodies(baseFeat, pending['names'])
@@ -72,12 +79,39 @@ def _names(name: str, count: int, partNames=None):
                      for i in range(1, count)]
 
 
+ATTR_PART = 'part'
+
+
+def _role(body, fallback: int) -> int:
+    """Part index of a body (0 = main body); bodies from before roles were
+    stored fall back to their position."""
+    try:
+        attr = body.attributes.itemByName(ATTR_GROUP, ATTR_PART)
+        if attr:
+            return int(attr.value)
+    except Exception:
+        pass
+    return fallback
+
+
+def _setRole(body, index: int):
+    try:
+        body.attributes.add(ATTR_GROUP, ATTR_PART, str(index))
+    except Exception:
+        gplog.logExc('set body role')
+    return body
+
+
 def _nameBodies(baseFeat, names):
-    for i in range(min(baseFeat.bodies.count, len(names))):
-        try:
-            baseFeat.bodies.item(i).name = names[i]
-        except Exception:
-            pass
+    """Name every body after its part role (main body = feature name)."""
+    for i in range(baseFeat.bodies.count):
+        body = baseFeat.bodies.item(i)
+        role = _role(body, i)
+        if role < len(names):
+            try:
+                body.name = names[role]
+            except Exception:
+                pass
 
 
 def _findBaseFeature(cf: adsk.fusion.CustomFeature):
@@ -167,9 +201,11 @@ class FeatureKind:
         names = _names(name, len(bodies), partNames)
         baseFeat = component.features.baseFeatures.add()
         baseFeat.startEdit()
-        for body, bodyName in zip(bodies, names):
-            component.bRepBodies.add(body, baseFeat).name = bodyName
+        for i, body in enumerate(bodies):
+            _setRole(component.bRepBodies.add(body, baseFeat), i)
         baseFeat.finishEdit()
+        # Names after the edit (Fusion may rename bodies while editing).
+        _nameBodies(baseFeat, names)
         cfInput = component.features.customFeatures.createInput(self._definition)
         cfInput.addCustomParameter('rev', 'Revision', adsk.core.ValueInput.createByReal(1), '', False)
         cfInput.setStartAndEndFeatures(baseFeat, baseFeat)
@@ -297,9 +333,10 @@ def _tagTop(des: adsk.fusion.Design, cf, params: dict):
 def createCabinet(des: adsk.fusion.Design, params: dict):
     params = withOverhang(des, params)
     matrix, comp = cabinetMatrix(des, params, world=False)
-    body = _placed(cabinetGeometry.buildCabinet(des, params), matrix)
+    bodies = [_placed(b, matrix) for b in cabinetGeometry.buildCabinetParts(des, params)]
     component = comp if comp is not None else des.rootComponent
-    cf = CABINET.create(component, body, params, cabinetLayout.describeCabinet(params))
+    cf = CABINET.create(component, bodies, params, cabinetLayout.describeCabinet(params),
+                        cabinetGeometry.cabinetPartNames(params))
     _tagTop(des, cf, params)
     return cf
 
@@ -311,34 +348,54 @@ def rebuildCabinet(des: adsk.fusion.Design, cf, params: dict, _visited=None):
     if token in visited:
         return
     visited.add(token)
+    # Dependents first: if the body count changes (slide-in top on / off) the
+    # feature is recreated and their stored token has to follow it.
+    inserts = [(f, q) for f, q in ((f, INSERT.readParams(f)) for f in INSERT.all(des))
+               if q and refersTo(des, q.get('cabinetToken'), cf)]
+    stacked = [(f, q) for f, q in ((f, CABINET.readParams(f)) for f in CABINET.all(des))
+               if q and f != cf and refersTo(des, q.get('plateToken'), cf)]
+    covers = [(f, q) for f, q in ((f, COVER.readParams(f)) for f in COVER.all(des))
+              if q and refersTo(des, q.get('plateToken'), cf)]
+    bins = [(f, q) for f, q in binFeature.allBins(des) if refersTo(des, q.get('plateToken'), cf)]
+
     params = withOverhang(des, params)
     matrix, _ = cabinetMatrix(des, params, world=False)
-    body = _placed(cabinetGeometry.buildCabinet(des, params), matrix)
-    CABINET.rebuild(cf, body, params, cabinetLayout.describeCabinet(params))
+    bodies = [_placed(b, matrix) for b in cabinetGeometry.buildCabinetParts(des, params)]
+    newCf = CABINET.rebuild(cf, bodies, params, cabinetLayout.describeCabinet(params),
+                            cabinetGeometry.cabinetPartNames(params)) or cf
+    if newCf != cf:
+        newToken = newCf.entityToken
+        visited.add(newToken)
+        gplog.log(f'cabinet recreated: re-pointing {len(inserts)} inserts, {len(stacked)} cabinets, '
+                  f'{len(covers)} covers, {len(bins)} bins')
+        for kind, deps, key in ((INSERT, inserts, 'cabinetToken'), (CABINET, stacked, 'plateToken'),
+                                (COVER, covers, 'plateToken')):
+            for f, q in deps:
+                q[key] = newToken
+                f.attributes.add(ATTR_GROUP, kind.attrName, json.dumps(q))
+        for f, q in bins:
+            q['plateToken'] = newToken
+            f.attributes.add(binFeature.ATTR_GROUP, binFeature.ATTR_PARAMS, json.dumps(q))
+        cf = newCf
     _tagTop(des, cf, params)
 
-    for ins in INSERT.all(des):
-        ip = INSERT.readParams(ins)
-        if ip and refersTo(des, ip.get('cabinetToken'), cf):
-            try:
-                rebuildInsert(des, ins, ip)
-            except Exception:
-                gplog.logExc('rebuild dependent insert')
-    for other in CABINET.all(des):
-        op = CABINET.readParams(other)
-        if op and refersTo(des, op.get('plateToken'), cf):
-            try:
-                rebuildCabinet(des, other, op, visited)
-            except Exception:
-                gplog.logExc('rebuild stacked cabinet')
-    for cover in COVER.all(des):
-        cp = COVER.readParams(cover)
-        if cp and refersTo(des, cp.get('plateToken'), cf):
-            try:
-                rebuildCover(des, cover, cp)
-            except Exception:
-                gplog.logExc('rebuild cover on cabinet')
+    for ins, ip in inserts:
+        try:
+            rebuildInsert(des, ins, ip)
+        except Exception:
+            gplog.logExc('rebuild dependent insert')
+    for other, op in stacked:
+        try:
+            rebuildCabinet(des, other, op, visited)
+        except Exception:
+            gplog.logExc('rebuild stacked cabinet')
+    for cover, cp in covers:
+        try:
+            rebuildCover(des, cover, cp)
+        except Exception:
+            gplog.logExc('rebuild cover on cabinet')
     binFeature.moveStacked(des, cf)
+    return cf
 
 
 def refersTo(des: adsk.fusion.Design, token, entity) -> bool:

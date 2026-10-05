@@ -36,6 +36,10 @@ Parametric pieces (Gridfinity foot, baseplate cell cutout) are replaced by simpl
 | `t_grip.py` | notch / finger hole + compartments (3 x 2): dividers in the way cut along the front row / a set depth / not at all; cross divider, back row and floor stay | 5 s |
 | `t_copy.py` | copy / paste settings: position keys never copied (bin, drawer, baseplate), a copy seeds new features, a bin rebuilds from stored values (inputs stand-in, table) | 1 s |
 | `t_pick.py` | drawer *Picked slots*: click adds / removes, one click counts once, slots = picked (or the current slot) | 1 s |
+| `t_detent.py` | detent: cabinet tooth (flat ramp front, steep edge back), insert notch with steep hold flank, push-in ramp, lead-in at the back end, stop hard / soft / off, tooth fits the notch (ledges + grooves) | 5 s |
+| `t_slidetop.py` | slide-in top: rails on the side walls (undercut), plate slots open at the front / closed at the back, no overlap; old cabinets stay one piece | 5 s |
+| `t_snap.py` | snap tongue: 45 deg slots, free front end, joined at the back, room inside, hook; cabinet catch takes the closed hook, divider keeps material (left high / right low); old cabinets without catches | 10 s |
+| `t_bodynames.py` | multi-body features: bodies matched / named by stored part role, not by Fusion's list order | 1 s |
 | `test_geom.py` | cabinet/insert probes (walls, ledges, grooves, detent, handles, knobs, labels, wire holes, overhang, top grid) + collision scan cabinet vs. insert, closed and pulled out | ~2-3 min |
 | `t_dialogs.py` | builds the bin, cabinet, drawer and cover dialogs against fake inputs that reject non-ASCII / duplicate input ids (Fusion: "invalid argument id") | 3 s |
 | `t_bin2.py` | builds the bin dialog 3x in a row; each run must reach the handler attach line (~874, `add_handler` KeyError is the mock's limit, not a bug) | 2 s |

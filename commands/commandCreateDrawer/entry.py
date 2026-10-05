@@ -43,7 +43,7 @@ ICON_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resource
 IN_CABINET = 'cabinet'
 IN_FILL = 'fill'
 IN_RESULT = 'result'
-RESULT_KEYS = ('Outside', 'Inside', 'Compartment', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
+RESULT_KEYS = ('Outside', 'Inside', 'Snap tongue', 'Compartment', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
                'Spool play floor/top', 'Spool slot', 'Axle', 'Inserts')
 FILL_ONE = 'This slot'
 FILL_COLUMN = 'Whole column'
@@ -206,8 +206,19 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'floor', 'Floor thickness', p, units, minimum=0.08, maximum=0.5)
     form.length(g, 'front', 'Front thickness', p, units, minimum=0.1, maximum=1.0)
     form.length(g, 'frontGap', 'Gap between fronts', p, units, minimum=0.0, maximum=0.3)
-    form.boolean(g, 'stop', 'Pull-out stop', p,
-                 'Catches on the detent bump so the insert cannot fall out (pull firmly to remove)')
+    form.boolean(g, 'snapTongue', 'Snap tongue (experimental)', p,
+                 'Spring tongue in each side wall with a hook that clicks into the cabinet\'s catch when '
+                 'closed (needs Snap catches on the cabinet). Press it in from inside to take the insert out '
+                 'without force.')
+    form.choice(g, 'stop', 'Pull-out stop', p, L.STOP_MODES,
+                'Catches on the cabinet\'s detent bump at the end of the travel.\n'
+                'Hard: a vertical face - lift the insert a little to take it out (ledges).\n'
+                'Like the detent: pull firmly to take it out.\n'
+                'Auto: hard on ledges, like the detent in grooves.')
+    form.unitless(g, 'detentHold', 'Detent hold angle (°)', p,
+                  tooltip='Steepness of the flank that keeps the insert closed (degrees, steeper = holds better)')
+    form.unitless(g, 'detentRamp', 'Detent push-in ramp (°)', p,
+                  tooltip='Ramp the insert is pushed in over (degrees, flatter = closes more easily)')
 
     # --- handle
     g = inputs.addGroupCommandInput('handleGroup', 'Handle').children
@@ -264,6 +275,8 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
                 'it; centred without a handle.')
     form.length(g, 'labelWidth', 'Label width', p, units, minimum=0.6)
     form.length(g, 'labelHeight', 'Label height', p, units, minimum=0.4)
+    form.length(g, 'labelDepth', 'Label depth', p, units, minimum=0.0, maximum=0.1,
+                tooltip='Sticker recess: how deep the field is (default 0.2 mm)')
     form.offset(g, 'labelOffsetX', 'Label offset X', p, units, 'Shift right (+) / left (-), stays on the front')
     form.offset(g, 'labelOffsetZ', 'Label offset Z', p, units, 'Shift up (+) / down (-), stays on the front')
     form.integer(g, 'wireHoles', 'Wire outlets', p, 0, 4,
@@ -424,7 +437,9 @@ def _syncVisibility(inputs):
     _, cp, cab = _cabinet(inputs)
     p = _params(inputs)
     form.setVisible(inputs, 'span', bool(cab and cab['grooved']))
-    form.setVisible(inputs, 'stop', bool(cp and cp.get('detent')))
+    for inputId in ('stop', 'detentHold', 'detentRamp'):
+        form.setVisible(inputs, inputId, bool(cp and cp.get('detent')))
+    form.setVisible(inputs, 'snapTongue', bool(cp and cp.get('snapCatch')))
     form.setVisible(inputs, 'frontGap', p['frontStyle'] == L.FRONT_OVERLAY)
     drawer = p['insertType'] == L.INSERT_DRAWER
     form.setVisible(inputs, 'interior', drawer)
@@ -458,6 +473,7 @@ def _syncVisibility(inputs):
     hasLabel = p['label'] != L.LABEL_NONE
     for inputId in ('labelPos', 'labelWidth', 'labelHeight', 'labelOffsetX', 'labelOffsetZ'):
         form.setVisible(inputs, inputId, hasLabel)
+    form.setVisible(inputs, 'labelDepth', p['label'] == L.LABEL_RECESS)
     form.setVisible(inputs, 'wireDiameter', int(p['wireHoles']) > 0 and not spools)
 
 
@@ -501,6 +517,14 @@ def _updateInfo(inputs):
             'Inside': '{} x {} x {} mm'.format(mm(innerW), mm(innerL), mm(innerH)),
         }
         problems = list(ins['errors'])
+        if (p.get('snapTongue') and cab.get('snap') and not ins['blank']):
+            bands = L.snapBands(cab, ins['slot']['row'] - 1)
+            missing = [s for s in ('left', 'right') if bands[s] is None]
+            if missing:
+                problems.append('Note: no snap tongue on the {} side - the row is too low for it'.format(
+                    ' and '.join(missing)))
+            else:
+                values['Snap tongue'] = 'both sides, {} mm behind the front'.format(mm(L.SNAP_Y0))
         if (p['interior'] == L.INTERIOR_COMPARTMENTS and not ins['blank']
                 and (int(p['divX']) > 1 or int(p['divY']) > 1)):
             # Same split as the geometry: equal compartments, walls in between.
@@ -508,6 +532,9 @@ def _updateInfo(inputs):
             uW = (innerW - (cx - 1) * tw) / cx
             uL = (innerL - (cy - 1) * tw) / cy
             values['Compartment'] = '{} x {} x {} mm ({} x {})'.format(mm(uW), mm(uL), mm(innerH), cx, cy)
+            if tw < L.THIN_WALL_WARNING - 1e-9:
+                problems.append('Note: dividers {} mm thin - below {} mm (two lines) they may come off '
+                                'the floor'.format(mm(tw), mm(L.THIN_WALL_WARNING)))
         if p['interior'] == L.INTERIOR_GRID and not ins['blank']:
             nx, ny = L.gridCells(innerW, innerL, cp['baseW'], cp['baseL'], cp['cl'])
             if nx and ny:
@@ -532,6 +559,11 @@ def _updateInfo(inputs):
                 mm(ls['H']), mm(ls['p']), ls['angle'], note)
         sp = ins.get('spools')
         if sp is not None:
+            thin = [name for key, name in (('spoolDivider', 'divider'), ('spoolEnd', 'end support'))
+                    if float(p[key]) < L.THIN_WALL_WARNING - 1e-9]
+            if thin:
+                problems.append('Note: spool {} below {} mm (two lines) - may come off the floor'.format(
+                    ' and '.join(thin), mm(L.THIN_WALL_WARNING)))
             values['Spool max Ø'] = '{} mm ({} mm inside height - {} mm under the spool)'.format(
                 mm(sp['maxD']), mm(innerH), mm(L.SPOOL_BOTTOM_GAP + L.SPOOL_TOP_GAP))
             if not sp['errors']:

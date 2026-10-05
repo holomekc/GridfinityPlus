@@ -66,10 +66,14 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 - Optional Gridfinity feet (magnet / screw holes): snaps onto a baseplate like a bin.
 - Optional Gridfinity grid on top: bins and further cabinets snap onto it, so cabinets stack into a wall. To stack,
   just click the top of an existing cabinet while placing a new one.
+- **Slide-in top** (default): the top is a plate of its own that slides in from the front on undercut rails along the
+  side walls and stops at the back. The cabinet prints standing with nothing to bridge (feet on the bed), the plate
+  prints flat with its grid pockets facing up. *Fixed* keeps the one-piece top.
 - Columns (vertical dividers) and rows (equal, or weighted like `1,1,2`).
 - Guides: **ledges** (inserts rest on shelf strips) or **grooves** (V-grooves, inserts carry runners; an insert can
   span several rows).
-- Optional click detent (adjustable bump height), adjustable walls (1.2 mm default) and insert clearances.
+- Optional click detent (bump 0.8 mm by default, adjustable), adjustable walls (1.2 mm default) and insert
+  clearances.
 - Wall mount: screw holes in the back wall for M2–M6, countersunk or pan / cheese head, 1–2 rows, 1–6 holes per row,
   distances from the sides / top / bottom. The back wall gets just thick enough for the head to sit flush inside, so
   the drawers still close (they get a little shorter).
@@ -103,12 +107,21 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
   end runs on towards the side wall (adjustable length) so it can't slide out. Spools are centred in the drawer; every spool is checked
   against the finished drawer (handle, guides, walls) and the dialog says which one does not fit. The preview always
   shows the spools; *Show spools in model* also adds them as a separate body for planning (not for printing).
-- Pull-out stop (with the cabinet's detent) and *Show pulled out* for viewing.
+- Detent: the cabinet's bump is a tooth with a flat ramp in front and a steep edge behind. The insert slides in over
+  ramps (also at its back end when it is put in) and a steep flank holds it shut, also with the cabinet tilted
+  forward; both insert angles adjustable.
+- **Experimental**, off by default: snap tongue. A spring tongue in each side wall of the insert clicks into a catch
+  in the cabinet wall when it is closed. Not print-tested yet: the hook and the catches have overhangs that may not
+  print cleanly, and the tongue leaves open slots in the insert's side walls (small parts can get stuck there). Turn
+  on *Snap catches* on the cabinet and *Snap tongue* on the insert to try it.
+- Pull-out stop: *hard* (vertical face, lift the insert a little to take it out; default with ledges), *like the
+  detent* (pull firmly; default with grooves) or off. *Show pulled out* moves the insert out for viewing.
 - Click a cabinet's front: that picks the cabinet (like selecting a body) and the slot in one go. Or fill a whole
   column or the whole cabinet at once, or use *Picked slots*: every click on the front adds or removes a slot.
 
-All overhangs are 45° (ledges, grooves, runners, handle undersides, teardrop knob). Print cabinets upright or on their
-back, inserts bottom down.
+All overhangs are 45° (ledges, grooves, runners, rails, handle undersides, teardrop knob). Print cabinets standing
+(with the slide-in top; a one-piece top needs supports under it or printing on the back), top plates flat, inserts
+bottom down.
 
 **Gridfinity+ Cover**: a flat plate on Gridfinity feet that closes empty baseplate cells, e.g. in front of a
 cabinet. Size in cells, thickness above the plate, optional magnet / screw holes. Placed like a bin (click a cell,

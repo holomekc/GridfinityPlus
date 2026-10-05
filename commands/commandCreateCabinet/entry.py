@@ -144,6 +144,8 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
         gplog.session(f'CABINET dialog EDIT "{_editedFeature.name}"')
         args.command.okButtonText = 'Update cabinet'
         p = L.withDefaults(dict(stored, **(_pasteSeed or {})), L.CABINET_DEFAULTS)
+        if 'topMount' not in stored and 'topMount' not in (_pasteSeed or {}):
+            p['topMount'] = L.TOP_MOUNT_FIXED      # made before the slide-in plate
         _pasteSeed = None
     else:
         _editedFeature = None
@@ -221,6 +223,9 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'grooveDepth', 'Groove depth', p, units, minimum=0.1, maximum=0.5)
     form.boolean(g, 'detent', 'Click detent', p,
                  'Small bump near the front: inserts click shut, with a stop they cannot fall out')
+    form.boolean(g, 'snapCatch', 'Snap catches (experimental)', p,
+                 'Experimental: catches in the walls for the inserts\' snap tongues (they click in when '
+                 'closed). Not print-tested; the tongue leaves slots in the insert\'s side walls.')
     form.length(g, 'detentHeight', 'Detent height', p, units, minimum=0.02, maximum=0.15,
                 tooltip='How far the bump sticks up (default 0.6 mm). Higher = firmer click. '
                         'The insert height clearance grows with it.')
@@ -251,6 +256,10 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     g = inputs.addGroupCommandInput('topGroup', 'Top').children
     form.choice(g, 'topType', 'Top', p, L.TOP_TYPES,
                 'Gridfinity grid: bins and further cabinets snap onto the top')
+    form.choice(g, 'topMount', 'Top piece', p, L.TOP_MOUNTS,
+                'Slide-in plate: the top is printed flat on its own and slides in from the front '
+                'on rails along the side walls; the cabinet then prints standing with nothing to bridge.\n'
+                'Fixed: one piece (print the cabinet on its back or with supports under the top).')
     form.choice(g, 'topEdge', 'Top over border', p, L.TOP_EDGE_TYPES,
                 'Where the cabinet fills to the plate edge: repeat a partial cell as a cut '
                 'pocket (like the baseplate), or keep it flat')

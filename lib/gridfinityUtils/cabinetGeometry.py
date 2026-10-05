@@ -75,9 +75,14 @@ def _prismYZ(x0, x1, ya, yb, za, zb, cuts):
 
 def _slab(x0, x1, y0, y1, z0, z1, rFront, rBack):
     """Box with vertical corner fillets, separate radius front (y0) / back."""
+    return _slabCorners(x0, x1, y0, y1, z0, z1, rFront, rFront, rBack, rBack)
+
+
+def _slabCorners(x0, x1, y0, y1, z0, z1, rFL, rFR, rBL, rBR):
+    """Box with vertical corner fillets, one radius per corner (front = y0)."""
     body = _box(x0, x1, y0, y1, z0, z1)
-    for cx, cy, r, sx, sy in ((x0, y0, rFront, 1, 1), (x1, y0, rFront, -1, 1),
-                              (x0, y1, rBack, 1, -1), (x1, y1, rBack, -1, -1)):
+    for cx, cy, r, sx, sy in ((x0, y0, rFL, 1, 1), (x1, y0, rFR, -1, 1),
+                              (x0, y1, rBL, 1, -1), (x1, y1, rBR, -1, -1)):
         if r <= 0:
             continue
         _subtract(body, _box(min(cx, cx + sx * r), max(cx, cx + sx * r),
@@ -125,6 +130,106 @@ def _detentCylinder(strip, y, radius):
     return _cylinderAxis((xa, y, z), (xb, y, z), radius)
 
 
+def _prismXY(x0, x1, y0, y1, za, zb, cuts):
+    """Same as _prismXZ, as a prism along z with a convex XY profile."""
+    body = _box(min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1), za, zb)
+    for point, normal in cuts:
+        _cutHalfSpace(body, point, normal)
+    return body
+
+
+def _snapHook(cab, ip):
+    """Hook geometry shared by the insert and the cabinet catch:
+    (y of the hook's front at the outer face, its length, reach p)."""
+    lat = float(cab['p']['fitLateral'])
+    p = lat + L.SNAP_ENGAGE
+    kH, kL = _kAngle(L.SNAP_HOLD_ANGLE), _kAngle(L.SNAP_LEAD_ANGLE)
+    y0 = cab['front'] + L.SNAP_Y0 + 0.02
+    return y0, p * (kH + kL), p, kH, kL, lat
+
+
+def snapCatches(cab):
+    """Catches cut into the cabinet walls, one per slot side: the hook of
+    an insert's snap tongue clicks in here when it is closed."""
+    if not cab['snap']:
+        return []
+    hy0, hookLen, p, kH, kL, lat = _snapHook(cab, None)
+    fb = float(cab['p']['fitBack'])
+    c = L.SNAP_CLEARANCE
+    dc = L.SNAP_ENGAGE + c                          # depth into the wall
+    yb = hy0 + hookLen
+    tools = []
+    for x0, x1 in cab['columns']:
+        for r in range(len(cab['rows'])):
+            bands = L.snapBands(cab, r)
+            for face, d, band in ((x0, -1, bands['left']), (x1, 1, bands['right'])):
+                if band is None:
+                    continue
+                zs, zt = band
+                yF = hy0 + kH * lat - c * math.sqrt(1 + kH * kH)      # flank parallel to the hook
+                yB = yb - kL * lat + fb + c * math.sqrt(1 + kL * kL)
+                tools.append(_prismXY(face - 0.01 * d, face + dc * d, yF - kH * dc - 0.05,
+                                      yB + 0.05, zs - c, zt + c,
+                                      [((face, yF, 0), (kH * d, -1, 0)),
+                                       ((face, yB, 0), (kL * d, 1, 0))]))
+    return tools
+
+
+def _snapTongues(cab, ins, tw, cuts, adds, keepOut):
+    """Spring tongue + hook in both side walls of the insert (see
+    cabinetLayout SNAP_*). Slots above and below run at 45 deg through the
+    wall, so nothing hangs in the air when printing and the tongue can still
+    bend inwards freely."""
+    hy0, hookLen, p, kH, kL, lat = _snapHook(cab, ins['p'])
+    ty0 = cab['front'] + L.SNAP_Y0
+    ty1 = ty0 + L.SNAP_LEN
+    if ins['y1'] - ins['y0'] < L.SNAP_Y0 + L.SNAP_LEN + 0.3:
+        return
+    bands = L.snapBands(cab, ins['slot']['row'] - 1)
+    g = L.SNAP_GAP
+    gg = g * _SQRT2
+    for xo, sx, band in ((ins['x0'], 1, bands['left']), (ins['x1'], -1, bands['right'])):
+        if band is None:
+            continue
+        zs, zt = band
+        xa, xb = sorted((xo - sx * 0.01, xo + sx * (tw + 0.01)))
+        # u = depth into the wall from the outside: sx * (x - xo).
+        cuts.append(_prismXZ(xa, xb, ty0 - g, ty1, zs - tw - gg - 0.02, zs + 0.02,
+                             [((xo, 0, zs), (sx, 0, 1)), ((xo, 0, zs - gg), (-sx, 0, -1))]))
+        cuts.append(_prismXZ(xa, xb, ty0 - g, ty1, zt - 0.02, zt + tw + gg + 0.02,
+                             [((xo, 0, zt + gg), (-sx, 0, 1)), ((xo, 0, zt), (sx, 0, -1))]))
+        cuts.append(_box(xa, xb, ty0 - g, ty0, zs - tw - gg - 0.02, zt + tw + gg + 0.02))
+        # Room inside so the tongue can bend in (cuts dividers / solid back).
+        keepOut.append(_box(*sorted((xo + sx * tw, xo + sx * (tw + L.SNAP_ENGAGE + 0.1))),
+                            ty0 - g, ty1, zs - tw - gg, zt + tw + gg))
+        # Hook on the outside near the free end: 60 deg holding face in
+        # front, 30 deg lead-in behind, 45 deg underneath.
+        zb = zs + 0.03
+        yb = hy0 + hookLen
+        hx0, hx1 = sorted((xo - sx * p, xo + sx * 0.02))
+        adds.append(_prismXY(hx0, hx1, hy0, yb + 0.01, zb, zt - 0.03,
+                             [((xo, hy0, 0), (-kH * sx, -1, 0)),
+                              ((xo, yb, 0), (-kL * sx, 1, 0)),
+                              ((xo, 0, zb), (-sx, 0, -1))]))
+
+
+def _kAngle(deg):
+    """Run per rise of a flank at `deg` degrees from the floor."""
+    return 1.0 / math.tan(math.radians(deg))
+
+
+def _detentTooth(strip, y, height):
+    """Cabinet bump: a tooth across the strip, tip `height` above it at y.
+    Flat ramp in front (the insert slides in over it), steep hard edge behind
+    (it holds the insert in). Reaches as deep below the strip as it stands
+    out, so it also sits firmly on a groove flank."""
+    xa, xb, z = strip
+    kF, kB = _kAngle(L.BUMP_FRONT_ANGLE), _kAngle(L.BUMP_BACK_ANGLE)
+    h = height
+    return _prismYZ(xa, xb, y - 2 * kF * h, y + 2 * kB * h, z - h, z + h,
+                    [((0, y, z + h), (0, -1, kF)), ((0, y, z + h), (0, 1, kB))])
+
+
 def gridFeet(des, p: dict, partial: dict, outline, radius: float):
     """Gridfinity feet for a unitsW x unitsL footprint (bin convention: foot
     cell i at x = i * baseW). A partial plate cell on a side adds one more
@@ -158,34 +263,100 @@ def gridFeet(des, p: dict, partial: dict, outline, radius: float):
 
 # ------------------------------------------------------------------- cabinet
 
+def _gridCornerCuts(cab):
+    """Grid on top: where a full cell's corner is the body's front corner,
+    round that layer like the pocket, else a flat stub stays standing next to
+    it. Not over a border / partial cell: there the pockets are cut straight
+    at the edge."""
+    rFront = cab['radius']
+    if not cab['topIsGrid'] or cab['radius'] <= rFront:
+        return []
+    ox0, ox1, front = cab['x0'], cab['x1'], cab['front']
+    R, zg = cab['radius'], cab['zTop'] - const.BIN_BASE_HEIGHT
+    cuts = []
+    for cx, sx, flush in ((ox0, 1, abs(ox0) < 1e-6), (ox1, -1, abs(ox1 - cab['aW']) < 1e-6)):
+        if not flush or abs(front) > 1e-6:
+            continue
+        corner = _box(min(cx, cx + sx * R), max(cx, cx + sx * R), front - 0.1, front + R,
+                      zg, cab['zTop'] + 0.1)
+        _subtract(corner, _cylinderAxis((cx + sx * R, front + R, zg - 0.1),
+                                        (cx + sx * R, front + R, cab['zTop'] + 0.2), R))
+        cuts.append(corner)
+    return cuts
+
+
+def _topCells(des, cab):
+    """Grid pockets of the top (none for a flat top). Over a partial plate
+    cell the top repeats it as a cut pocket (unless the top edge is set to
+    flat); over padding it stays flat."""
+    if not cab['topIsGrid']:
+        return []
+    p = cab['p']
+    cell = _getCellCutout(des, p['baseW'], p['baseL'], p['cl'])
+    part = cab['partial'] if p['topEdge'] == L.TOP_EDGE_PLATE else {}
+    tL, tR = int(part.get('left', False)), int(part.get('right', False))
+    tF, tB = int(part.get('front', False)), int(part.get('back', False))
+    tools = []
+    for i in range(-tL, int(p['unitsW']) + tR):
+        for j in range(-tF, int(p['unitsL']) + tB):
+            tool = _tmgr().copy(cell)
+            _translate(tool, i * p['baseW'], j * p['baseL'], cab['zTop'])
+            tools.append(tool)
+    return tools
+
+
+def _rails(cab, grow=0.0, yFrom=None, yTo=None):
+    """Rails on top of both side walls (grow > 0: the plate's slot, with
+    play, open to the outside and below). Cross-section (left side, from the
+    outer face): w wide on the wall, undercut 45 deg inwards by h, top sloped
+    45 deg up to the outside."""
+    rl = cab['rail']
+    w, h, z = rl['w'], rl['h'], cab['ceil']
+    g = grow * _SQRT2
+    y0 = cab['front'] if yFrom is None else yFrom
+    y1 = rl['y1'] if yTo is None else yTo
+    out = 1.0 if grow > 0 else 0.0          # the slot runs on past the outside / below
+    tools = []
+    for face, sx in ((cab['x0'], 1), (cab['x1'], -1)):
+        xa, xb = face - sx * out, face + sx * (w + h + g + 0.01)
+        tools.append(_prismXZ(xa, xb, y0, y1, z - out, z + w + 2 * h + g + 0.01,
+                              [((face + sx * (w + g), 0, z), (sx, 0, -1)),
+                               ((face + sx * (w + h), 0, z + h + g), (sx, 0, 1))]))
+    return tools
+
+
 def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
-    """Cabinet temp body in its local frame (see cabinetLayout)."""
+    """Cabinet temp body in its local frame (see cabinetLayout); a slide-in
+    top plate is merged in (dialog preview)."""
+    parts = buildCabinetParts(des, params)
+    if len(parts) == 1:
+        return parts[0]
+    merged = _tmgr().copy(parts[0])
+    for part in parts[1:]:
+        _union(merged, _tmgr().copy(part))
+    return merged
+
+
+def cabinetPartNames(params: dict):
+    """Names of the extra bodies buildCabinetParts returns after the cabinet."""
+    return ['top plate'] if L.cabinet(params)['rail'] else []
+
+
+def buildCabinetParts(des: adsk.fusion.Design, params: dict):
+    """[cabinet, slide-in top plate?] temp bodies in the cabinet's local frame."""
     with gplog.timed('cabinet build'):
         cab = L.cabinet(params)
         p = cab['p']
         ox0, ox1, front, back = cab['x0'], cab['x1'], cab['front'], cab['back']
-        # Front corners only as round as the wall is thick: with the full
-        # Gridfinity radius the side walls would start behind the front and
-        # ledges / flush inserts would stick out.
-        rFront = min(cab['radius'], cab['wall'])
+        slide = cab['rail'] is not None
+        # Front corners as round as the feet and the top (the Gridfinity
+        # radius): the side walls run out into the rounding just behind the
+        # front; inserts in the outer columns are rounded to match.
+        rFront = cab['radius']
         body = _slab(ox0, ox1, front, back, cab['zBottom'], cab['zTop'], rFront, cab['radius'])
-        if cab['topIsGrid'] and cab['radius'] > rFront:
-            # Grid on top: where a full cell's corner is the body's front
-            # corner, round that layer like the pocket, else a flat stub stays
-            # standing next to it. Not over a border / partial cell: there the
-            # pockets are cut straight at the edge.
-            R, zg = cab['radius'], cab['zTop'] - const.BIN_BASE_HEIGHT
-            cuts = []
-            for cx, sx, flush in ((ox0, 1, abs(ox0) < 1e-6), (ox1, -1, abs(ox1 - cab['aW']) < 1e-6)):
-                if not flush or abs(front) > 1e-6:
-                    continue
-                corner = _box(min(cx, cx + sx * R), max(cx, cx + sx * R), front - 0.1, front + R,
-                              zg, cab['zTop'] + 0.1)
-                _subtract(corner, _cylinderAxis((cx + sx * R, front + R, zg - 0.1),
-                                                (cx + sx * R, front + R, cab['zTop'] + 0.2), R))
-                cuts.append(corner)
-            if cuts:
-                _subtract(body, _unionAll(cuts))
+        cornerCuts = _gridCornerCuts(cab)
+        if cornerCuts and not slide:
+            _subtract(body, _unionAll(cornerCuts))
 
         # Interior: one open-front pocket per column.
         # Back corners rounded like the outside: the wall keeps its thickness.
@@ -217,27 +388,37 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
         if cuts:
             _subtract(body, _unionAll(cuts))
 
+        catches = snapCatches(cab)
+        if catches:
+            _subtract(body, _unionAll(catches))
+
         if cab['detentR'] > 0:
             bumps = []
             for c in range(len(cab['columns'])):
                 for r in range(len(cab['rows'])):
                     for strip in L.contactStrips(cab, c, r):
-                        bumps.append(_detentCylinder(strip, cab['detentY'], cab['detentR']))
+                        bumps.append(_detentTooth(strip, cab['detentY'], cab['detentR']))
             _union(body, _unionAll(bumps))
 
-        holes = []
-        if cab['topIsGrid']:
-            # Over a partial plate cell the top repeats it as a cut pocket
-            # (unless the top edge is set to flat); over padding it stays flat.
-            cell = _getCellCutout(des, p['baseW'], p['baseL'], p['cl'])
-            part = cab['partial'] if p['topEdge'] == L.TOP_EDGE_PLATE else {}
-            tL, tR = int(part.get('left', False)), int(part.get('right', False))
-            tF, tB = int(part.get('front', False)), int(part.get('back', False))
-            for i in range(-tL, int(p['unitsW']) + tR):
-                for j in range(-tF, int(p['unitsL']) + tB):
-                    tool = _tmgr().copy(cell)
-                    _translate(tool, i * p['baseW'], j * p['baseL'], cab['zTop'])
-                    holes.append(tool)
+        plate = None
+        if slide:
+            # Slide-in top: the cabinet ends at the ceiling with a rail on
+            # each side wall; the top is a plate of its own with matching
+            # slots (open at the front, closed at the back = its stop).
+            plate = _slab(ox0, ox1, front, back, cab['ceil'], cab['zTop'], rFront, cab['radius'])
+            _subtract(body, _box(ox0 - 1.0, ox1 + 1.0, front - 1.0, back + 1.0, cab['ceil'], cab['zTop'] + 1.0))
+            # Rails follow the rounded outer corners (front and back).
+            rails = _unionAll(_rails(cab))
+            envelope = _slab(ox0, ox1, front, back, cab['ceil'] - 0.1, cab['zTop'] + 0.1, rFront, cab['radius'])
+            _tmgr().booleanOperation(rails, envelope, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+            _union(body, rails)
+            plateCuts = cornerCuts + _topCells(des, cab)
+            plateCuts += _rails(cab, cab['rail']['clearance'], front - 1.0,
+                                cab['rail']['y1'] + cab['rail']['clearance'])
+            _subtract(plate, _unionAll(plateCuts))
+            holes = []
+        else:
+            holes = _topCells(des, cab)
         if p['wallMount']:
             # Screw from the inside, head flush with the inside of the back
             # wall (the back wall is thick enough, see cabinetLayout).
@@ -256,8 +437,8 @@ def buildCabinet(des: adsk.fusion.Design, params: dict) -> adsk.fusion.BRepBody:
         if p['feet']:
             _union(body, gridFeet(des, p, cab['partial'], (ox0, ox1, front, back), cab['radius']))
 
-        gplog.log(f'cabinet build: faces={body.faces.count} errors={cab["errors"]}')
-        return body
+        gplog.log(f'cabinet build: faces={body.faces.count} slide-in top={slide} errors={cab["errors"]}')
+        return [body] + ([plate] if plate is not None else [])
 
 
 # -------------------------------------------------------------------- insert
@@ -286,8 +467,14 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
         frontT = float(ip['front'])
 
         # Back corners follow the cabinet's rounded interior back corners.
+        # Front corners next to an outer side wall follow the cabinet's
+        # rounded front corner: they touch it in the front plane.
         rBack = max(0.1, cab['backCornerR'])
-        body = _slab(x0, x1, y0, y1, z0, z1, 0.1, rBack)
+        rOuterL = cab['radius'] - (x0 - cab['x0'])
+        rOuterR = cab['radius'] - (cab['x1'] - x1)
+        rFL = max(0.1, rOuterL) if ins['slot']['column'] == 1 else 0.1
+        rFR = max(0.1, rOuterR) if ins['slot']['column'] == len(cab['columns']) else 0.1
+        body = _slabCorners(x0, x1, y0, y1, z0, z1, rFL, rFR, rBack, rBack)
         panel = ins['panel']
         if panel is not None:
             _union(body, _box(panel['x0'], panel['x1'], panel['y0'], panel['y1'] + _EPS, panel['z0'], panel['z1']))
@@ -302,11 +489,15 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
             fit = float(cp['fitLateral'])
             # The grooves end before the rounded back corner.
             ry1 = min(y1, cab['guideEnd'] - float(cp['fitBack']))
-            runners = [
+            runners = _unionAll([
                 _runner(ins['colX0'], +1, y0, ry1, gc, gd, fit, x0 + tw / 2),
                 _runner(ins['colX1'], -1, y0, ry1, gc, gd, fit, x1 - tw / 2),
-            ]
-            _union(body, _unionAll(runners))
+            ])
+            # Stay inside the cabinet's rounded front corners.
+            outline = _slab(cab['x0'], cab['x1'], cab['front'], cab['back'], z0 - 1.0, z1 + 1.0,
+                            cab['radius'], cab['radius'])
+            _tmgr().booleanOperation(runners, outline, adsk.fusion.BooleanTypes.IntersectionBooleanType)
+            _union(body, runners)
 
         # Interior pockets (behind the front).
         px0, px1 = x0 + tw, x1 - tw
@@ -352,6 +543,16 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
             _tmgr().booleanOperation(tools, envelope, adsk.fusion.BooleanTypes.IntersectionBooleanType)
         _subtract(body, tools)
 
+        snapCuts, snapAdds, snapKeep = [], [], []
+        if cab['snap'] and ip.get('snapTongue') and not ins['blank']:
+            _snapTongues(cab, ins, tw, snapCuts, snapAdds, snapKeep)
+            if snapKeep:
+                _subtract(body, _unionAll(snapKeep))
+            if snapAdds:
+                _union(body, _unionAll(snapAdds))
+            if snapCuts:
+                _subtract(body, _unionAll(snapCuts))
+
         # Front: label band + handle band, wire outlets.
         labelRect, band, blocked = frontLayout(ip, fx0, fx1, fz0, fz1)
         gplog.log(f'insert front: handle={ip["handle"]} label={ip["label"]} pos={ip.get("labelPos")} '
@@ -395,24 +596,55 @@ def buildInsertParts(des: adsk.fusion.Design, cabParams: dict, insertParams: dic
         if adds:
             _union(body, _unionAll(adds))
 
-        # Detent: notch where the bump rests when closed, ridge, relief channel
-        # behind it; with a stop, the channel ends before the back (solid land
-        # that catches on the bump when pulled out).
-        r = cab['detentR'] + L.DETENT_CLEARANCE
+        # Detent (seen from the side; the cabinet's tooth rides in it):
+        #   notch    - the tooth rests here when closed; its back flank is
+        #              steep (detentHold): pulling out has to climb it
+        #   ridge    - short flat land behind the notch
+        #   channel  - the tooth travels in it while the insert is out; it
+        #              starts with a flat ramp (detentRamp): closing is easy
+        #   stop     - land at the back end: hard (vertical, lift to take out),
+        #              soft (the steep flank again) or none
+        #   lead-in  - the back end itself is ramped, so the insert slides in
+        #              over the tooth when it is put in
+        R = cab['detentR']
+        c = L.DETENT_CLEARANCE
+        r = R + c
         yd = cab['detentY']
-        chEnd = y1 - L.STOP_LAND if ip['stop'] else y1 + 1.0
+        stop = L.stopMode(cab, ip)
+        kHold = _kAngle(max(15.0, min(85.0, float(ip.get('detentHold') or L.DETENT_HOLD_ANGLE))))
+        kRamp = _kAngle(max(10.0, min(85.0, float(ip.get('detentRamp') or L.DETENT_RAMP_ANGLE))))
+        kF, kB = _kAngle(L.BUMP_FRONT_ANGLE), _kAngle(L.BUMP_BACK_ANGLE)
+        # Back flank: clears the tooth's tip (and its steep back face) by c.
+        dBack = max(kHold, kB) * R + c * math.sqrt(1.0 + kHold * kHold)
+        notchFront = yd - 2 * kF * R - 2 * c
+        chEnd = y1 - L.STOP_LAND if stop != L.STOP_OFF else y1 + 1.0
         ribs = []
         for strip in ins['contact']:
             xa, xb, z = strip
+            xa, xb = xa - _EPS, xb + _EPS
             if not cab['grooved'] and tf < r + 0.2:
                 # Thin floor: a rib inside over the notch/channel so the floor
                 # is never cut through there.
-                ribs.append(_box(max(xa - 0.1, x0), min(xb + 0.1, x1), yd - r - 0.1,
-                                 min(max(chEnd, yd + r + 0.1), py1), z0, z0 + r + 0.2))
-            cuts.append(_detentCylinder((xa - _EPS, xb + _EPS, z), yd, r))
-            chStart = yd + r + L.DETENT_RIDGE
-            if chEnd > chStart:
-                cuts.append(_box(xa - _EPS, xb + _EPS, chStart, chEnd, z - r, z + r))
+                ribs.append(_box(max(xa - 0.1, x0), min(xb + 0.1, x1), notchFront - 0.1,
+                                 min(max(chEnd, yd + dBack + 0.1), py1), z0, z0 + r + 0.2))
+            if R <= 0:
+                continue
+            # Notch: front parallel to the tooth's ramp, flat top, steep back.
+            cuts.append(_prismYZ(xa, xb, notchFront - r * kF, yd + dBack + r * kHold, z - r, z + r,
+                                 [((0, yd - c * math.sqrt(1.0 + kF * kF), z + R), (0, -1, kF)),
+                                  ((0, yd + dBack, z), (0, 1, kHold))]))
+            chStart = yd + dBack + L.DETENT_RIDGE
+            if chEnd > chStart + 0.05:
+                cutsCh = [((0, chStart, z), (0, -1, kRamp))]              # flat ramp in
+                yEnd = chEnd
+                if stop == L.STOP_SOFT:
+                    cutsCh.append(((0, chEnd, z), (0, 1, kHold)))         # steep, not hard
+                    yEnd = chEnd + r * kHold
+                cuts.append(_prismYZ(xa, xb, chStart - r * kRamp, yEnd, z - r, z + r, cutsCh))
+            if stop != L.STOP_OFF:
+                # Lead-in at the back end: the insert goes in over the tooth.
+                cuts.append(_prismYZ(xa, xb, y1 - r * kRamp - 0.01, y1 + 0.1, z - r, z + r,
+                                     [((0, y1, z + r), (0, -1, kRamp))]))
         if ribs:
             _union(body, _unionAll(ribs))
         if cuts:
@@ -548,8 +780,10 @@ def _label(ip, rect, yF, adds, cuts):
         return
     lx0, lx1, lz0, lz1 = rect
     if ip['label'] == L.LABEL_RECESS:
-        # 0.3 mm deep field: the sticker sits flush and straight.
-        cuts.append(_box(lx0, lx1, yF - 0.1, yF + 0.03, lz0, lz1))
+        # Shallow field: the sticker sits flush and straight.
+        depth = max(0.0, float(ip.get('labelDepth', 0.02) or 0.0))
+        if depth > 0:
+            cuts.append(_box(lx0, lx1, yF - 0.1, yF + depth, lz0, lz1))
         return
     # Card holder, open at the top: slot behind a front flange. All walls are
     # vertical, the flange stands on the bottom frame, so no supports needed.

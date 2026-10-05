@@ -36,6 +36,16 @@ GUIDE_TYPES = (GUIDE_LEDGE, GUIDE_GROOVE)
 TOP_FLAT = 'Flat'
 TOP_GRID = 'Gridfinity grid (stackable)'
 TOP_TYPES = (TOP_FLAT, TOP_GRID)
+# The top as its own plate that slides in from the front: the cabinet prints
+# standing without a ceiling to bridge, the plate prints flat.
+TOP_MOUNT_FIXED = 'Fixed (one piece)'
+TOP_MOUNT_SLIDE = 'Slide-in plate'
+TOP_MOUNTS = (TOP_MOUNT_SLIDE, TOP_MOUNT_FIXED)
+# Rail on top of each side wall (outside flush, inside undercut at 45 deg, top
+# sloped at 45 deg so the plate's matching slot needs no support either).
+RAIL_UNDERCUT = 0.08        # how far the undercut reaches in
+RAIL_CLEARANCE = 0.02       # play between rail and slot
+RAIL_STOP = 0.3             # rail ends this far before the back: the plate stops there
 # Top grid over the plate border / partial cells (cabinet 'Fill to edge').
 TOP_EDGE_PLATE = 'Like the plate (partial pockets)'
 TOP_EDGE_FLAT = 'Flat'
@@ -141,12 +151,44 @@ GROOVE_MIN_BACKING = 0.12
 GROOVE_TIP = 0.1
 # Detent: default bump height on the cabinet, its distance from the front and
 # the ridge the insert climbs over before it clicks in.
-DETENT_HEIGHT = 0.06
+DETENT_HEIGHT = 0.08
 DETENT_FRONT_OFFSET = 0.6
 DETENT_RIDGE = 0.15
 DETENT_CLEARANCE = 0.02
+# Extra vertical play over the bump height: the insert lifts over the bump
+# (and over a hard stop when it is taken out).
+DETENT_LIFT = 0.04
+# Insert side of the detent: the flank that holds it closed is steep, the
+# ramp it is pushed in over is flat (degrees from the floor).
+DETENT_HOLD_ANGLE = 70.0
+DETENT_RAMP_ANGLE = 30.0
+# The cabinet's bump is a tooth: flat ramp at the front (the insert slides in
+# over it), hard steep edge at the back (holds the insert in).
+BUMP_FRONT_ANGLE = 30.0
+BUMP_BACK_ANGLE = 80.0
 # Pull-out stop: solid land at the insert's back end that hits the bump.
 STOP_LAND = 0.4
+STOP_AUTO = 'Auto'
+STOP_HARD = 'Hard (lift to remove)'
+STOP_SOFT = 'Like the detent'
+STOP_OFF = 'Off'
+STOP_MODES = (STOP_AUTO, STOP_HARD, STOP_SOFT, STOP_OFF)
+# Snap tongue: a spring tongue in each side wall of the insert (free at the
+# front, joined at the back) with a hook that clicks into a catch in the
+# cabinet wall when the insert is closed. The catch sits at a fixed distance
+# from the cabinet front, so any insert depth works. Left tongue high, right
+# tongue low: catches from both sides of a divider never meet.
+SNAP_Y0 = 0.8            # free end of the tongue, from the cabinet front
+SNAP_LEN = 2.0           # tongue length (spring)
+SNAP_H = 0.8             # tongue height at the outer face
+SNAP_MIN_H = 0.4
+SNAP_GAP = 0.05          # slots around the tongue
+SNAP_ENGAGE = 0.05       # how far the hook reaches into the cabinet wall
+SNAP_CLEARANCE = 0.02
+SNAP_HOLD_ANGLE = 60.0   # hook face that holds the insert shut
+SNAP_LEAD_ANGLE = 30.0   # hook face it slides in over
+# Older inserts stored the pull-out stop as a checkbox.
+_LEGACY['stop'] = {True: STOP_AUTO, False: STOP_OFF}
 
 # Wall mount screws: clearance hole, countersunk head (DIN 7991, 90°) and
 # pan / cheese head (ISO 7045 / ISO 1207) diameter + height, in cm.
@@ -246,6 +288,9 @@ CABINET_DEFAULTS = {
     'magnets': False,
     'screws': False,
     'topType': TOP_GRID,
+    'topMount': TOP_MOUNT_SLIDE,
+    # Experimental, off by default (see README).
+    'snapCatch': False,
     'wallMount': False,
     'mountScrew': 'M4',
     'mountHead': 'Countersunk',
@@ -295,6 +340,8 @@ INSERT_DEFAULTS = {
     'labelOffsetZ': 0.0,
     'labelWidth': 5.0,
     'labelHeight': 1.2,
+    # Sticker recess depth (0.2 mm: the sticker sits flush and straight).
+    'labelDepth': 0.02,
     'wireHoles': 0,
     'wireDiameter': 0.5,
     'spoolCount': 1,
@@ -321,8 +368,23 @@ INSERT_DEFAULTS = {
     'interior': INTERIOR_EMPTY,
     'divX': 2,
     'divY': 1,
-    'stop': True,
+    # Pull-out stop (Auto: hard on ledges, like the detent in grooves).
+    'stop': STOP_AUTO,
+    'snapTongue': False,
+    'detentHold': DETENT_HOLD_ANGLE,
+    'detentRamp': DETENT_RAMP_ANGLE,
 }
+
+
+def stopMode(cab: dict, ip: dict) -> str:
+    """Resolved pull-out stop: hard on ledges (lift the insert to take it
+    out), like the detent in grooves (the runner can barely lift there)."""
+    mode = ip.get('stop', STOP_AUTO)
+    if mode not in STOP_MODES:
+        mode = STOP_AUTO
+    if mode == STOP_AUTO:
+        return STOP_SOFT if cab['grooved'] else STOP_HARD
+    return mode
 
 
 def withDefaults(params: dict, defaults: dict) -> dict:
@@ -396,6 +458,17 @@ def cabinet(params: dict) -> dict:
     floorTop = zBottom + float(p['floor']) if not p['feet'] else float(p['floor'])
     topIsGrid = p['topType'] == TOP_GRID
     topThickness = float(p['top']) + (baseH if topIsGrid else 0.0)
+    # Cabinets from before the slide-in plate keep their one-piece top.
+    slide = (params or {}).get('topMount', TOP_MOUNT_FIXED) == TOP_MOUNT_SLIDE
+    rail = None
+    if slide:
+        rw = max(0.08, float(p['wall']))
+        rail = {'w': rw, 'h': RAIL_UNDERCUT, 'clearance': RAIL_CLEARANCE,
+                'height': rw + 2 * RAIL_UNDERCUT, 'y1': oy1 - RAIL_STOP}
+        # The plate's slot (rail + play) must stay below the grid pockets
+        # (they reach the outer edge only in their top 2.4 mm).
+        slot = rail['height'] + 2 * RAIL_CLEARANCE
+        topThickness = max(topThickness, slot + (0.28 if topIsGrid else 0.12))
     ceil = zTop - topThickness
     innerBack = oy1 - backWall
 
@@ -448,7 +521,9 @@ def cabinet(params: dict) -> dict:
         'guideEnd': min(innerBack - backCornerR, oy1 - radius),
         'wall': wall, 'divider': divider, 'backWall': backWall,
         'floorTop': floorTop, 'ceil': ceil, 'innerBack': innerBack,
-        'topIsGrid': topIsGrid,
+        'topIsGrid': topIsGrid, 'rail': rail,
+        # Older cabinets have no snap catches (their inserts get no tongues).
+        'snap': bool((params or {}).get('snapCatch', False)),
         'columns': columns, 'rows': rows,
         'grooved': grooved, 'grooveDepth': gd,
         'ledgeDepth': float(p['ledgeDepth']), 'ledgeThickness': float(p['ledgeThickness']),
@@ -468,6 +543,38 @@ def grooveCenter(row: dict) -> float:
 def supportZ(cab: dict, rowIndex: int) -> float:
     """z of the surface an insert in this row rests / runs on (ledge variant)."""
     return cab['rows'][rowIndex]['bottom']
+
+
+def snapBands(cab: dict, rowIndex: int) -> dict:
+    """z range [zs, zt] of the snap tongue at the insert's outer face, per
+    side ('left' high, 'right' low), or None where it does not fit. Clear of
+    the insert's floor, rim and runner (grooves); the slots run at 45 deg
+    through the wall, so the tongue is a wall thickness taller inside."""
+    row = cab['rows'][rowIndex]
+    tw = float(INSERT_DEFAULTS['wall'])
+    slot = SNAP_GAP * 1.4143 + 0.05
+    # The slots run a wall thickness further down / up inside the wall:
+    # keep them off the insert's floor and rim.
+    zLo = row['bottom'] + 0.12 + tw + slot + 0.06
+    zHi = row['top'] - 0.12 - tw - slot
+    if cab['grooved']:
+        # Runner at the outer face: tip + 45 deg flanks; it reaches half a
+        # wall thickness into the wall, where the slanted slots pass.
+        half = GROOVE_TIP / 2 + cab['grooveDepth'] + tw / 2 + slot
+        gc = grooveCenter(row)
+        high, low = (gc + half, zHi), (zLo, gc - half)
+    else:
+        mid = (zLo + zHi) / 2
+        high, low = (mid + 0.05, zHi), (zLo, mid - 0.05)
+
+    def fit(band):
+        a, b = band
+        if b - a < SNAP_MIN_H:
+            return None
+        h = min(SNAP_H, b - a)
+        c = (a + b) / 2
+        return (c - h / 2, c + h / 2)
+    return {'left': fit(high), 'right': fit(low)}
 
 
 def contactStrips(cab: dict, colIndex: int, rowIndex: int):
@@ -516,7 +623,7 @@ def insert(cab: dict, insertParams: dict) -> dict:
     vert = float(cp['fitVertical'])
     if cab['detentR'] > 0:
         # The insert rides over the bump: it lifts by the bump height.
-        vert = max(vert, cab['detentR'] + DETENT_CLEARANCE)
+        vert = max(vert, cab['detentR'] + DETENT_LIFT)
 
     rowLo = cab['rows'][r0]
     rowHi = cab['rows'][r1]
@@ -642,6 +749,9 @@ AXLE_BAYONET_SMOOTH = 'Bayonet, smooth outside'
 AXLE_ONE_PIECE = 'One piece'
 AXLE_SPLITS = (AXLE_BAYONET, AXLE_BAYONET_SMOOTH, AXLE_ONE_PIECE)
 MIN_SPOOL_WALL = 0.04        # thinnest divider / end support: one 0.4 mm line
+# Thinner walls standing on the drawer floor (two 0.4 mm lines) hold badly:
+# the dialog warns, nothing is changed.
+THIN_WALL_WARNING = 0.08
 # Wire outlet height in front of the spools.
 HOLE_BOTTOM = 'Bottom'
 HOLE_MIDDLE = 'Middle'

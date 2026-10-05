@@ -366,9 +366,12 @@ r2, b2, _ = G.frontLayout(tins['p'], tins['x0'], tins['x1'], tins['z0'], tins['z
 print('tall front auto: label', [round(v, 2) for v in r2], 'band', [round(v, 2) for v in b2])
 real = dict(L.CABINET_DEFAULTS)
 rcab = L.cabinet(real); rb = G.buildCabinet(None, real)
-check('wall reaches front (1.2 mm wall)', rb, (0.06, 0.02, 1.0), True)
-check('right wall reaches front', rb, (rcab['aW'] - 0.06, 0.02, 1.0), True)
-check('ledge at front', rb, (0.2, 0.02, rcab['rows'][1]['bottom'] - 0.05), True)
+# Front corners as round as feet and top: the wall runs out into the rounding.
+Rf = rcab['radius']
+check('wall right behind the front rounding', rb, (0.06, Rf + 0.02, 1.0), True)
+check('right wall right behind the front rounding', rb, (rcab['aW'] - 0.06, Rf + 0.02, 1.0), True)
+check('front corner rounded like the feet', rb, (0.06, 0.02, 1.0), False)
+check('ledge near the front', rb, (0.2, 0.3, rcab['rows'][1]['bottom'] - 0.05), True)
 check('nothing in front of cabinet', rb, (0.2, -0.02, rcab['rows'][1]['bottom'] - 0.05), False)
 check('back corner still rounded', rb, (0.02, rcab['aL'] - 0.02, 1.0), False)
 print('errors default', cab['errors'], 'groove', gcab['errors'])
