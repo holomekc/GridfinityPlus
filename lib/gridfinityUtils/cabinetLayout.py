@@ -468,7 +468,10 @@ def cabinet(params: dict) -> dict:
         # The plate's slot (rail + play) must stay below the grid pockets
         # (they reach the outer edge only in their top 2.4 mm).
         slot = rail['height'] + 2 * RAIL_CLEARANCE
-        topThickness = max(topThickness, slot + (0.28 if topIsGrid else 0.12))
+        # Flat and grid plates are equally thick (as thick as a grid top),
+        # so cabinets of the same height match outside and inside, whatever
+        # their top. Nothing is added on top.
+        topThickness = max(float(p['top']) + baseH, slot + 0.28)
     ceil = zTop - topThickness
     innerBack = oy1 - backWall
 

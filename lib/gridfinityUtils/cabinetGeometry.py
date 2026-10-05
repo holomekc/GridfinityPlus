@@ -302,6 +302,12 @@ def _topCells(des, cab):
             tool = _tmgr().copy(cell)
             _translate(tool, i * p['baseW'], j * p['baseL'], cab['zTop'])
             tools.append(tool)
+    # Like a baseplate: the whole top is cut down by the bin height clearance,
+    # which leaves the ridges between the pockets flat (not knife edges).
+    clr = const.BASEPLATE_BIN_Z_CLEARANCE
+    if clr > 0:
+        tools.append(_box(cab['x0'] - 1.0, cab['x1'] + 1.0, cab['front'] - 1.0, cab['back'] + 1.0,
+                          cab['zTop'] - clr, cab['zTop'] + 1.0))
     return tools
 
 

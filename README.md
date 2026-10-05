@@ -68,7 +68,8 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
   just click the top of an existing cabinet while placing a new one.
 - **Slide-in top** (default): the top is a plate of its own that slides in from the front on undercut rails along the
   side walls and stops at the back. The cabinet prints standing with nothing to bridge (feet on the bed), the plate
-  prints flat with its grid pockets facing up. *Fixed* keeps the one-piece top.
+  prints flat with its grid pockets facing up. *Fixed* keeps the one-piece top. Flat and grid plates are equally
+  thick, so cabinets of the same height match outside and inside, whatever their top.
 - Columns (vertical dividers) and rows (equal, or weighted like `1,1,2`).
 - Guides: **ledges** (inserts rest on shelf strips) or **grooves** (V-grooves, inserts carry runners; an insert can
   span several rows).

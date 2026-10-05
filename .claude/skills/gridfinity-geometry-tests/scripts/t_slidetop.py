@@ -61,4 +61,27 @@ for guide in (L.GUIDE_LEDGE, L.GUIDE_GROOVE):
                 if body.contains(list(pt)) and plate.contains(list(pt)):
                     fails += 1
                     print('FAIL', n, 'rail and plate overlap', [round(v, 3) for v in pt])
+# Grid top like a baseplate: the top is cut down by the bin height clearance
+# (flat ridges between the pockets), fixed top and slide-in plate alike.
+from GridfinityPlus.lib.gridfinityUtils import const
+clr = const.BASEPLATE_BIN_Z_CLEARANCE
+for mount in (L.TOP_MOUNT_FIXED, L.TOP_MOUNT_SLIDE):
+    cp = dict(L.CABINET_DEFAULTS, topType=L.TOP_GRID, topMount=mount)
+    cab = L.cabinet(cp)
+    parts = G.buildCabinetParts(None, cp)
+    top = parts[-1]
+    xr = cab['p']['baseW'] - cab['p']['cl']            # ridge between the first two pockets
+    ym = (cab['front'] + cab['back']) / 2
+    check(f'{mount}: ridge cut down by the clearance', top, (xr, ym, cab['zTop'] - clr / 2), False)
+    check(f'{mount}: ridge below the cut', top, (xr, ym, cab['zTop'] - clr - 0.02), True)
+
+# Slide-in: flat and grid cabinets of the same height match outside and inside.
+flat = L.cabinet(dict(L.CABINET_DEFAULTS, topType=L.TOP_FLAT, topMount=L.TOP_MOUNT_SLIDE))
+grid = L.cabinet(dict(L.CABINET_DEFAULTS, topType=L.TOP_GRID, topMount=L.TOP_MOUNT_SLIDE))
+expect('flat / grid: same outside height', abs(flat['zTop'] - grid['zTop']) < 1e-9)
+expect('flat / grid: same inside', abs(flat['ceil'] - grid['ceil']) < 1e-9 and
+       [r['height'] for r in flat['rows']] == [r['height'] for r in grid['rows']])
+fixedGrid = L.cabinet(dict(L.CABINET_DEFAULTS, topType=L.TOP_GRID, topMount=L.TOP_MOUNT_FIXED))
+expect('grid: slide-in costs nothing', abs(fixedGrid['ceil'] - grid['ceil']) < 1e-9 and
+       abs(fixedGrid['zTop'] - grid['zTop']) < 1e-9)
 print('DONE fails', fails)
