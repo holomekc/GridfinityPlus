@@ -10,8 +10,9 @@ in milliseconds:
   * The body is a rounded box; hollow bins get an inner pocket; the stacking
     lip is a rounded ring on top.
 
-Ghost-only simplifications (exact geometry is built once on OK):
-scoop, label tab, custom compartments, shelled split, lip notches.
+Ghost-only simplifications (exact geometry is built once on OK): lip
+profile and notches, shelled split. The interior (compartments, scoop, label
+tabs) is the result's own (binInterior).
 
 All lengths are Fusion internal units (cm).
 """
@@ -24,6 +25,7 @@ from . import gplog
 from . import scratchUtils
 from . import geometryUtils
 from . import baseGenerator
+from . import binInterior
 from .baseGeneratorInput import BaseGeneratorInput
 from .baseplateFastPreview import _roundedSlab, _tmgr, _translate, _unionAll, _subtract, _union
 
@@ -142,11 +144,14 @@ def buildPreviewBin(des: adsk.fusion.Design, params: dict, inputs) -> adsk.fusio
             body = _roundedSlab(x0, x1, y0, y1, 0, bodyH, r)
             if withLip:
                 lip = _roundedSlab(x0, x1, y0, y1, bodyH, bodyH + const.BIN_LIP_EXTRA_HEIGHT, r)
+                if binType != 'Solid':
+                    lw = const.BIN_LIP_WALL_THICKNESS
+                    _subtract(lip, _roundedSlab(x0 + lw, x1 - lw, y0 + lw, y1 - lw, bodyH - 0.01,
+                                                bodyH + const.BIN_LIP_EXTRA_HEIGHT + 0.1, max(0.05, r - lw)))
                 _union(body, lip)
-            pocketTop = bodyH + (const.BIN_LIP_EXTRA_HEIGHT if withLip else 0) + 0.1
             if binType == 'Hollow':
-                _cutCompartments(body, inputs, binEntry, x0, x1, y0, y1, bodyH, pocketTop,
-                                 wall, cl, r, withLip)
+                # Same interior as the result (compartments, scoop, tabs).
+                binInterior.applyInterior(body, binEntry.interiorSpec(inputs, ovh))
             if result is None:
                 result = body
             else:
@@ -179,42 +184,3 @@ def buildPreviewBin(des: adsk.fusion.Design, params: dict, inputs) -> adsk.fusio
 
         gplog.log(f'binFastPreview: {binW}x{binL}x{binH} faces={result.faces.count}')
         return result
-
-
-def _cutCompartments(body, inputs, binEntry, x0, x1, y0, y1, bodyH, pocketTop, wall, cl, r, withLip):
-    """Hollow preview: one pocket per compartment, mirroring binBodyGenerator."""
-    cx = int(inputs.itemById(binEntry.BIN_COMPARTMENTS_GRID_BASE_WIDTH_ID).value)
-    cy = int(inputs.itemById(binEntry.BIN_COMPARTMENTS_GRID_BASE_LENGTH_ID).value)
-    hasScoop = inputs.itemById(binEntry.BIN_HAS_SCOOP_INPUT_ID).value
-    layout = inputs.itemById(binEntry.BIN_COMPARTMENTS_GRID_TYPE_ID)
-    custom = layout and layout.selectedItem and layout.selectedItem.name == binEntry.BIN_COMPARTMENTS_GRID_TYPE_CUSTOM
-
-    compartments = []  # (posX, posY, w, l, depth)
-    if custom:
-        table = inputs.itemById(binEntry.BIN_COMPARTMENTS_TABLE_ID)
-        for i in range(1, table.rowCount):
-            v = [table.getInputAtPosition(i, j).value for j in range(5)]
-            compartments.append((int(v[0]), int(v[1]), int(v[2]), int(v[3]), float(v[4])))
-    else:
-        compartments = [(i, j, 1, 1, 1e9) for i in range(cx) for j in range(cy)]
-
-    minX, maxX = x0 + wall, x1 - wall
-    minY = y0 + ((const.BIN_LIP_WALL_THICKNESS - cl) if (withLip and hasScoop) else wall)
-    maxY = y1 - wall
-    uW = (maxX - minX - (cx - 1) * wall) / max(1, cx)
-    uL = (maxY - minY - (cy - 1) * wall) / max(1, cy)
-    rr = max(0.05, r - wall)
-
-    tools = []
-    for px, py, w, l, depth in compartments:
-        ox = minX + px * (uW + wall)
-        oy = minY + py * (uL + wall)
-        cw = uW * w + (w - 1) * wall
-        cL = uL * l + (l - 1) * wall
-        d = min(bodyH - const.BIN_COMPARTMENT_BOTTOM_THICKNESS, depth)
-        tools.append(_roundedSlab(ox, ox + cw, oy, oy + cL, bodyH - d, pocketTop, rr))
-    # Dividers sit slightly below the rim; the lip opening is always free.
-    clearance = const.BIN_TAB_TOP_CLEARANCE if len(compartments) > 1 else 0.0
-    tools.append(_roundedSlab(minX, maxX, minY, maxY, bodyH - clearance, pocketTop, rr))
-    if tools:
-        _subtract(body, _unionAll(tools))

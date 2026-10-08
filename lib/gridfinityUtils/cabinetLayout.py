@@ -31,7 +31,8 @@ from . import const
 
 GUIDE_LEDGE = 'Ledges'
 GUIDE_GROOVE = 'Grooves'
-GUIDE_TYPES = (GUIDE_LEDGE, GUIDE_GROOVE)
+GUIDE_HOOK = 'Hooked grooves (print on its back)'
+GUIDE_TYPES = (GUIDE_LEDGE, GUIDE_GROOVE, GUIDE_HOOK)
 
 TOP_FLAT = 'Flat'
 TOP_GRID = 'Gridfinity grid (stackable)'
@@ -41,11 +42,52 @@ TOP_TYPES = (TOP_FLAT, TOP_GRID)
 TOP_MOUNT_FIXED = 'Fixed (one piece)'
 TOP_MOUNT_SLIDE = 'Slide-in plate'
 TOP_MOUNTS = (TOP_MOUNT_SLIDE, TOP_MOUNT_FIXED)
+# Feet: built in (the cabinet prints standing), or slide-on feet - one
+# Gridfinity foot per cell, printed on its own like a bin's; the cabinet then
+# has a flat bottom and prints on its back (fixed top, no bridges). Each
+# foot slides onto a dovetail head under its cell, running front to back -
+# printed on the back its profile just rises (set the foot on, push it the
+# head length to the stop, it clicks). The push direction alternates per
+# column (held both ways in a baseplate); the first column's feet are
+# pushed backwards, their stops at the front: with a single column the
+# cabinet only comes off moved backwards - toward the wall. Mount each
+# column from its far end.
+FOOT_RIM = 0.15             # foot left beyond the channel's stop end
+FOOT_BUILT_IN = 'Built in'
+FOOT_SLIDE = 'Slide-on feet (print on its back)'
+FOOT_MOUNTS = (FOOT_BUILT_IN, FOOT_SLIDE)
+FOOT_HEAD_DEPTH = 0.25      # head height into the foot (flanks 45 deg)
+FOOT_PLAY = 0.015           # play around the head
+FOOT_CLICK = 0.02           # click bump under the head
+FOOT_CLICK_LEN = 0.15
+FOOT_CLICK_RIDGE = 0.08     # floor the bump climbs over before it clicks in
 # Rail on top of each side wall (outside flush, inside undercut at 45 deg, top
 # sloped at 45 deg so the plate's matching slot needs no support either).
 RAIL_UNDERCUT = 0.08        # how far the undercut reaches in
 RAIL_CLEARANCE = 0.02       # play between rail and slot
 RAIL_STOP = 0.3             # rail ends this far before the back: the plate stops there
+# Click for the top plate: a bump on each rail's top just before its end and
+# a matching hollow in the plate's slot; the plate slides over it only on
+# the last millimetres and then clicks in.
+# Held from outside: the rail leans inwards ("/"), RAIL_SKIN in from the
+# outer face. The plate grips it from both sides: under its inner side (as
+# before) and over its outer side, a wedge flush with the outer face that
+# thickens upwards. A wall bending outwards would have to lift the plate,
+# which the inner side stops - the plate holds the walls.
+TOP_LOCK_INSIDE = 'Inside rails'
+TOP_LOCK_OUTSIDE = 'Held from outside'
+TOP_LOCKS = (TOP_LOCK_OUTSIDE, TOP_LOCK_INSIDE)
+RAIL_SKIN = 0.05            # least plate edge outside the rail
+RAIL_LEAN = 0.5             # the rail's outer side runs this far in per rise
+RAIL_TOP_GRID = 0.28        # rail top line (u + v) under grid pockets
+RAIL_TOP_FLAT = 0.45        # ... under a flat top
+RAIL_HOOK = 0.1             # wanted inner hook (rail lean over the plate)
+RAIL_HOOK_MIN = 0.06
+RAIL_PLATE_REF = 0.62       # plate thickness the rail tops above are for
+RAIL_EDGE_MIN = 0.04        # plate edge at its thinnest (set rail width)
+RAIL_HOOK_SET = 0.05        # least hook with a set rail width
+CLICK_FROM_END = 0.2        # bump ends this far before the rail end
+CLICK_LENGTH = 0.4          # bump length along the rail
 # Top grid over the plate border / partial cells (cabinet 'Fill to edge').
 TOP_EDGE_PLATE = 'Like the plate (partial pockets)'
 TOP_EDGE_FLAT = 'Flat'
@@ -149,15 +191,25 @@ MIN_ROW_HEIGHT = 1.0
 GROOVE_MIN_BACKING = 0.12
 # Flat tip of the V-groove / runner profile.
 GROOVE_TIP = 0.1
+# Hooked groove (fractions of the groove depth d, from the groove centre):
+# the runner's arm rises 45 deg into the wall from HOOK_LOW * d below the
+# centre, its top is flat at HOOK_ARM * d; at its end a barb HOOK_BARB_W * d
+# wide stands up to HOOK_BARB * d, behind a lip of the wall. The runner
+# cannot leave the groove sideways, so the inserts hold the walls together.
+# Needs the cabinet printed on its back (the lip hangs down).
+HOOK_LOW = 0.8
+HOOK_ARM = 0.2
+HOOK_BARB = 0.6
+HOOK_BARB_W = 0.4
 # Detent: default bump height on the cabinet, its distance from the front and
 # the ridge the insert climbs over before it clicks in.
-DETENT_HEIGHT = 0.08
+DETENT_HEIGHT = 0.04
 DETENT_FRONT_OFFSET = 0.6
 DETENT_RIDGE = 0.15
 DETENT_CLEARANCE = 0.02
 # Extra vertical play over the bump height: the insert lifts over the bump
 # (and over a hard stop when it is taken out).
-DETENT_LIFT = 0.04
+DETENT_LIFT = 0.02
 # Insert side of the detent: the flank that holds it closed is steep, the
 # ramp it is pushed in over is flat (degrees from the floor).
 DETENT_HOLD_ANGLE = 70.0
@@ -169,24 +221,29 @@ BUMP_BACK_ANGLE = 80.0
 # Pull-out stop: solid land at the insert's back end that hits the bump.
 STOP_LAND = 0.4
 STOP_AUTO = 'Auto'
+STOP_SIDE = 'Side bump (pull firmly to remove)'
+STOP_TOP = 'Top catch (tilts, ledges)'
 STOP_HARD = 'Hard (lift to remove)'
 STOP_SOFT = 'Like the detent'
 STOP_OFF = 'Off'
-STOP_MODES = (STOP_AUTO, STOP_HARD, STOP_SOFT, STOP_OFF)
-# Snap tongue: a spring tongue in each side wall of the insert (free at the
-# front, joined at the back) with a hook that clicks into a catch in the
-# cabinet wall when the insert is closed. The catch sits at a fixed distance
-# from the cabinet front, so any insert depth works. Left tongue high, right
-# tongue low: catches from both sides of a divider never meet.
-SNAP_Y0 = 0.8            # free end of the tongue, from the cabinet front
-SNAP_LEN = 2.0           # tongue length (spring)
-SNAP_H = 0.8             # tongue height at the outer face
-SNAP_MIN_H = 0.4
-SNAP_GAP = 0.05          # slots around the tongue
-SNAP_ENGAGE = 0.05       # how far the hook reaches into the cabinet wall
-SNAP_CLEARANCE = 0.02
-SNAP_HOLD_ANGLE = 60.0   # hook face that holds the insert shut
-SNAP_LEAD_ANGLE = 30.0   # hook face it slides in over
+STOP_MODES = (STOP_AUTO, STOP_SIDE, STOP_TOP, STOP_HARD, STOP_SOFT, STOP_OFF)
+# Side bump: a bump on each column wall just behind the cabinet front and a
+# nose on each side wall of the insert near its back. Pulled out, the nose
+# runs into the bump's steep face; put in, it slides over the 30 deg face
+# (the walls give a little). Nothing hangs in the air when printing.
+SIDE_SIZE = 0.04         # bump and nose stand out this far (each)
+SIDE_PLAY = 0.005        # play in the shallow tracks they run in
+SIDE_H = 0.8             # height of bump and nose
+SIDE_HOLD_ANGLE = 75.0
+SIDE_LEAD_ANGLE = 30.0
+# Top catch (ledges): a tooth under the ledge / ceiling above, just behind
+# the front, and a nose on the insert's rim at the back. Pulled out level
+# the nose passes under the tooth; when the insert tilts (its back lifts),
+# the nose hits the tooth. Like a kitchen drawer: hold it level to take it out.
+TOP_Y = 0.3
+TOP_LEN = 0.25
+TOP_NOSE = 0.025         # nose above the insert's rim
+TOP_CLEAR = 0.012        # nose to tooth when level
 # Older inserts stored the pull-out stop as a checkbox.
 _LEGACY['stop'] = {True: STOP_AUTO, False: STOP_OFF}
 
@@ -279,18 +336,29 @@ CABINET_DEFAULTS = {
     'ledgeDepth': 0.3,
     'ledgeThickness': 0.15,
     'grooveDepth': 0.2,
-    'fitLateral': 0.05,
-    'fitVertical': 0.08,
+    'fitLateral': 0.025,
+    'fitVertical': 0.05,
+    # Play of a runner in its V-groove (per flank); kept apart from the side
+    # clearance so the insert does not wobble in the groove.
+    'grooveFit': 0.02,
     'fitBack': 0.0,
     'detent': True,
     'detentHeight': DETENT_HEIGHT,
     'feet': True,
+    'footMount': FOOT_BUILT_IN,
+    'footHeadLen': 1.6,         # dovetail head length (= push distance)
+    'footHeadWidth': 1.0,       # head width at the cabinet bottom (+ 2 x depth below)
     'magnets': False,
     'screws': False,
     'topType': TOP_GRID,
     'topMount': TOP_MOUNT_SLIDE,
+    # How much the plate has to squeeze over the click bump (0 = no click).
+    'topClick': 0.02,
+    'topLock': TOP_LOCK_OUTSIDE,
+    'railWidth': 0.0,
     # Experimental, off by default (see README).
-    'snapCatch': False,
+    # Bumps / teeth for the inserts' pull-out stops (STOP_SIDE / STOP_TOP).
+    'stopParts': True,
     'wallMount': False,
     'mountScrew': 'M4',
     'mountHead': 'Countersunk',
@@ -370,7 +438,6 @@ INSERT_DEFAULTS = {
     'divY': 1,
     # Pull-out stop (Auto: hard on ledges, like the detent in grooves).
     'stop': STOP_AUTO,
-    'snapTongue': False,
     'detentHold': DETENT_HOLD_ANGLE,
     'detentRamp': DETENT_RAMP_ANGLE,
 }
@@ -382,9 +449,28 @@ def stopMode(cab: dict, ip: dict) -> str:
     mode = ip.get('stop', STOP_AUTO)
     if mode not in STOP_MODES:
         mode = STOP_AUTO
+    if mode in (STOP_SIDE, STOP_TOP) and not cab['stopParts']:
+        mode = STOP_AUTO                     # the cabinet has no stop parts
+    if mode == STOP_TOP and cab['grooved']:
+        mode = STOP_SIDE                     # no ledge above a grooved slot
     if mode == STOP_AUTO:
+        if cab['stopParts']:
+            return STOP_SIDE
         return STOP_SOFT if cab['grooved'] else STOP_HARD
     return mode
+
+
+def bottomStop(cab: dict, ip: dict):
+    """Stop at the bottom / in the groove (STOP_HARD, STOP_SOFT) or None.
+    Auto with stop bumps uses it together with the side bump: like the
+    detent in a groove (the runner cannot lift there), hard on ledges."""
+    mode = ip.get('stop', STOP_AUTO)
+    resolved = stopMode(cab, ip)
+    if resolved in (STOP_HARD, STOP_SOFT):
+        return resolved
+    if mode not in (STOP_SIDE, STOP_TOP, STOP_OFF, STOP_HARD, STOP_SOFT) and cab['stopParts']:
+        return STOP_SOFT if cab['grooved'] else STOP_HARD
+    return None
 
 
 def withDefaults(params: dict, defaults: dict) -> dict:
@@ -443,7 +529,7 @@ def cabinet(params: dict) -> dict:
     baseH = const.BIN_BASE_HEIGHT
     zTop = heightUnits(p) * float(p['heightUnit']) - baseH
     zBottom = -baseH if not p['feet'] else 0.0
-    grooved = p['guide'] == GUIDE_GROOVE
+    grooved = p['guide'] in (GUIDE_GROOVE, GUIDE_HOOK)
     gd = float(p['grooveDepth'])
 
     wall = float(p['wall'])
@@ -464,7 +550,9 @@ def cabinet(params: dict) -> dict:
     if slide:
         rw = max(0.08, float(p['wall']))
         rail = {'w': rw, 'h': RAIL_UNDERCUT, 'clearance': RAIL_CLEARANCE,
-                'height': rw + 2 * RAIL_UNDERCUT, 'y1': oy1 - RAIL_STOP}
+                'height': rw + 2 * RAIL_UNDERCUT, 'y1': oy1 - RAIL_STOP,
+                'click': max(0.0, float(p.get('topClick') or 0.0)),
+                'skin': 0.0}
         # The plate's slot (rail + play) must stay below the grid pockets
         # (they reach the outer edge only in their top 2.4 mm).
         slot = rail['height'] + 2 * RAIL_CLEARANCE
@@ -472,6 +560,8 @@ def cabinet(params: dict) -> dict:
         # so cabinets of the same height match outside and inside, whatever
         # their top. Nothing is added on top.
         topThickness = max(float(p['top']) + baseH, slot + 0.28)
+        if (params or {}).get('topLock', TOP_LOCK_INSIDE) == TOP_LOCK_OUTSIDE:
+            rail.update(leaningRail(wall, topIsGrid, topThickness, float(p.get('railWidth') or 0.0)))
     ceil = zTop - topThickness
     innerBack = oy1 - backWall
 
@@ -503,7 +593,7 @@ def cabinet(params: dict) -> dict:
         errors.append('Cabinet too shallow')
     if any(r['height'] < MIN_ROW_HEIGHT for r in rows):
         errors.append('Rows too low (min {:g} mm free height)'.format(MIN_ROW_HEIGHT * 10))
-    if grooved and any(r['height'] < 2 * gd + GROOVE_TIP + 0.4 for r in rows):
+    if grooved and any(r['height'] < 2 * gd + GROOVE_TIP + 0.4 for r in rows):  # >= any profile
         errors.append('Rows too low for the grooves')
 
     radius = const.BIN_CORNER_FILLET_RADIUS - float(p['cl'])
@@ -525,10 +615,12 @@ def cabinet(params: dict) -> dict:
         'wall': wall, 'divider': divider, 'backWall': backWall,
         'floorTop': floorTop, 'ceil': ceil, 'innerBack': innerBack,
         'topIsGrid': topIsGrid, 'rail': rail,
-        # Older cabinets have no snap catches (their inserts get no tongues).
-        'snap': bool((params or {}).get('snapCatch', False)),
+        # Cabinets from before grooveFit used the side clearance for it.
+        'grooveFit': float((params or {}).get('grooveFit', p['fitLateral'])),
+        # Older cabinets have no stop bumps / teeth.
+        'stopParts': bool((params or {}).get('stopParts', False)),
         'columns': columns, 'rows': rows,
-        'grooved': grooved, 'grooveDepth': gd,
+        'grooved': grooved, 'grooveDepth': gd, 'hooked': p['guide'] == GUIDE_HOOK,
         'ledgeDepth': float(p['ledgeDepth']), 'ledgeThickness': float(p['ledgeThickness']),
         'errors': errors,
     }
@@ -539,8 +631,106 @@ def cabinet(params: dict) -> dict:
     return cab
 
 
+def leaningRail(wall: float, topIsGrid: bool, thickness: float, width: float = 0.0) -> dict:
+    """'Held from outside' rail in the real wall (grooved cabinets have
+    thicker walls): {'skin', 'foot', 'top'}, u = in from the outer face,
+    v = up from the ceiling. Rail foot [skin, foot] on the wall top, top
+    line u + v = top. A grid top's pockets leave only the triangle u + v <=
+    2.8 mm at the edge; a flat top much more. The foot ends where the inner
+    hook (the plate under the rail's 45 deg lean) still gets RAIL_HOOK; plate
+    edge and rail foot then split the rest equally; thicker walls and a
+    thicker plate make it bigger. width > 0: rail foot this thick, the plate
+    edge beside it only RAIL_EDGE_MIN; as far as the wall and the hook
+    (RAIL_HOOK_SET at least) allow - the plate never changes for it.
+    Skin 0 (inside rails) for walls too thin."""
+    play = RAIL_CLEARANCE * math.sqrt(1.0 + RAIL_LEAN ** 2)
+    extra = max(0.0, thickness - RAIL_PLATE_REF)
+    top = (RAIL_TOP_GRID + extra if topIsGrid
+           else min(RAIL_TOP_FLAT + extra, (1.0 + RAIL_LEAN) * (thickness - 0.1)))
+    if width > 0:
+        skin = RAIL_EDGE_MIN + play
+        foot = min(wall, skin + width, top - 2 * RAIL_HOOK_SET)
+        if foot - skin < 0.04:
+            return {'skin': 0.0}
+        return {'skin': skin, 'foot': foot, 'top': top}
+    foot = top - 2 * RAIL_HOOK
+    if foot < 0.12:
+        foot = max(0.12, top - 2 * RAIL_HOOK_MIN)
+    foot = min(wall, foot)
+    skin = max(RAIL_SKIN, (foot + play) / 2)
+    if foot - skin < 0.04:
+        return {'skin': 0.0}
+    return {'skin': skin, 'foot': foot, 'top': top}
+
+
+def footHead(cab: dict) -> dict:
+    """Slide-on foot dovetail: {'len', 'root', 'depth', 'half'} - as set, as
+    far as the foot allows: the channel must fit its length (the foot narrows
+    45 deg below its top; `half` = half its length at the channel floor) with
+    a rim at the stop end - the entry pocket may run out of the foot's end,
+    then the foot slides on from beyond it -, and the widened head + entry
+    pocket its width with 1 mm beside."""
+    p = cab['p']
+    t = FOOT_HEAD_DEPTH
+    floor = t + FOOT_PLAY + FOOT_CLICK + 0.03                # entry pocket floor depth
+    half = float(p['baseL']) / 2 - float(p['cl']) - floor
+    halfW = float(p['baseW']) / 2 - float(p['cl']) - floor
+    if int(p['unitsL']) > 1:
+        # Several rows: a foot is set on inside its own cell (channel + entry
+        # pocket fit the foot), else the next cell's head is in the way.
+        maxLen = half - 1.5 * FOOT_PLAY - 0.05
+    else:
+        maxLen = 2 * half - FOOT_RIM - 2 * FOOT_PLAY
+    maxRoot = 2 * (halfW - (t + FOOT_PLAY + 0.02) - 0.1)
+    return {'len': max(0.6, min(float(p.get('footHeadLen') or 1.6), maxLen)),
+            'root': max(0.3, min(float(p.get('footHeadWidth') or 1.0), maxRoot)),
+            'depth': t, 'half': half}
+
+
+def footCells(cab: dict):
+    """Slide-on feet: [(column, row, cx, hy, push)] for every full cell
+    (partial cells get no foot); hy = y of the head's centre: head channel
+    and entry pocket together are centred in the foot (a long head: the
+    channel from the stop rim on, the pocket runs out of the foot), so the
+    head sits off the cell centre against the push; push = direction the
+    foot is pushed along y to lock: +1 (backwards) in the first column, then
+    alternating per column."""
+    p = cab['p']
+    if not p['feet'] or p.get('footMount', FOOT_BUILT_IN) != FOOT_SLIDE:
+        return []
+    bw, bl, cl = float(p['baseW']), float(p['baseL']), float(p['cl'])
+    fh = footHead(cab)
+    hl, pl = fh['len'], FOOT_PLAY
+    # far (stop) end of the channel, from the cell centre
+    far = min(hl + 2 * pl, fh['half'] - FOOT_RIM)
+    out = []
+    for i in range(int(p['unitsW'])):
+        push = 1 if i % 2 == 0 else -1
+        for j in range(int(p['unitsL'])):
+            cy = j * bl + bl / 2 - cl
+            out.append((i, j, i * bw + bw / 2 - cl, cy - push * (far - hl / 2 - pl), push))
+    return out
+
+
 def grooveCenter(row: dict) -> float:
     return (row['bottom'] + row['top']) / 2
+
+
+def grooveSpan(cab: dict):
+    """(below, above) the groove centre the groove / runner reaches."""
+    gd = cab['grooveDepth']
+    if cab.get('hooked'):
+        return HOOK_LOW * gd, HOOK_BARB * gd
+    return GROOVE_TIP / 2 + gd, GROOVE_TIP / 2 + gd
+
+
+def grooveLowerZ(cab: dict, center: float, u: float) -> float:
+    """z of the groove's lower flank (the runner rides on it, 45 deg) u deep
+    in the wall."""
+    gd = cab['grooveDepth']
+    if cab.get('hooked'):
+        return center - HOOK_LOW * gd + u
+    return center - GROOVE_TIP / 2 - gd + u
 
 
 def supportZ(cab: dict, rowIndex: int) -> float:
@@ -548,36 +738,33 @@ def supportZ(cab: dict, rowIndex: int) -> float:
     return cab['rows'][rowIndex]['bottom']
 
 
-def snapBands(cab: dict, rowIndex: int) -> dict:
-    """z range [zs, zt] of the snap tongue at the insert's outer face, per
-    side ('left' high, 'right' low), or None where it does not fit. Clear of
-    the insert's floor, rim and runner (grooves); the slots run at 45 deg
-    through the wall, so the tongue is a wall thickness taller inside."""
-    row = cab['rows'][rowIndex]
-    tw = float(INSERT_DEFAULTS['wall'])
-    slot = SNAP_GAP * 1.4143 + 0.05
-    # The slots run a wall thickness further down / up inside the wall:
-    # keep them off the insert's floor and rim.
-    zLo = row['bottom'] + 0.12 + tw + slot + 0.06
-    zHi = row['top'] - 0.12 - tw - slot
-    if cab['grooved']:
-        # Runner at the outer face: tip + 45 deg flanks; it reaches half a
-        # wall thickness into the wall, where the slanted slots pass.
-        half = GROOVE_TIP / 2 + cab['grooveDepth'] + tw / 2 + slot
-        gc = grooveCenter(row)
-        high, low = (gc + half, zHi), (zLo, gc - half)
-    else:
-        mid = (zLo + zHi) / 2
-        high, low = (mid + 0.05, zHi), (zLo, mid - 0.05)
+def insertVert(cab: dict) -> float:
+    """Vertical play of an insert (it rides over the detent bump)."""
+    vert = float(cab['p']['fitVertical'])
+    if cab['detentR'] > 0:
+        vert = max(vert, cab['detentR'] + DETENT_LIFT)
+    return vert
 
-    def fit(band):
-        a, b = band
-        if b - a < SNAP_MIN_H:
-            return None
-        h = min(SNAP_H, b - a)
-        c = (a + b) / 2
-        return (c - h / 2, c + h / 2)
-    return {'left': fit(high), 'right': fit(low)}
+
+def sideBand(cab: dict, rowIndex: int):
+    """z range [zs, zt] of the side bump / nose in a row, clear of the
+    insert's floor and rim and (grooves) of its runner; None if it does not
+    fit."""
+    row = cab['rows'][rowIndex]
+    zLo = row['bottom'] + 0.3
+    zHi = row['top'] - 0.25
+    if cab['grooved']:
+        below, above = grooveSpan(cab)
+        gc = grooveCenter(row)
+        lo, hi = gc - below - 0.1, gc + above + 0.1
+        a, b = (hi, zHi) if zHi - hi >= lo - zLo else (zLo, lo)
+    else:
+        a, b = zLo, zHi
+    if b - a < 0.3:
+        return None
+    h = min(SIDE_H, b - a)
+    c = (a + b) / 2
+    return (c - h / 2, c + h / 2)
 
 
 def contactStrips(cab: dict, colIndex: int, rowIndex: int):
@@ -592,7 +779,7 @@ def contactStrips(cab: dict, colIndex: int, rowIndex: int):
     if cab['grooved']:
         gd = cab['grooveDepth']
         # Outer half of the lower flank (towards the groove tip).
-        z = grooveCenter(row) - GROOVE_TIP / 2 - 0.25 * gd
+        z = grooveLowerZ(cab, grooveCenter(row), 0.75 * gd)
         return [(x0 - gd, x0 - gd / 2, z), (x1 + gd / 2, x1 + gd, z)]
     # Middle of the strip where the insert overlaps the ledge, so it is still
     # carried on both sides of the channel. The floor (bottom row) uses the
@@ -623,10 +810,8 @@ def insert(cab: dict, insertParams: dict) -> dict:
     r1 = r0 + slot['span'] - 1
     x0, x1 = cab['columns'][c]
     lat = float(cp['fitLateral'])
-    vert = float(cp['fitVertical'])
-    if cab['detentR'] > 0:
-        # The insert rides over the bump: it lifts by the bump height.
-        vert = max(vert, cab['detentR'] + DETENT_LIFT)
+    # The insert rides over the bump: it lifts by the bump height.
+    vert = insertVert(cab)
 
     rowLo = cab['rows'][r0]
     rowHi = cab['rows'][r1]

@@ -79,6 +79,9 @@ class TBM:
             r = r1 + (r2 - r1)*t
             return _dot(_sub(p, q), _sub(p, q)) <= r*r
         return Body(f)
+    def createSphere(s, center, r):
+        c = center.asArray()
+        return Body(lambda p: _dot(_sub(p, c), _sub(p, c)) <= r * r)
     def createTorus(s, center, axis, R, r):
         c = center.asArray(); a = _norm(axis.asArray())
         def f(p):

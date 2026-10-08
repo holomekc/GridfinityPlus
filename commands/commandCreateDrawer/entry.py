@@ -43,7 +43,7 @@ ICON_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resource
 IN_CABINET = 'cabinet'
 IN_FILL = 'fill'
 IN_RESULT = 'result'
-RESULT_KEYS = ('Outside', 'Inside', 'Snap tongue', 'Compartment', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
+RESULT_KEYS = ('Outside', 'Inside', 'Compartment', 'Gridfinity grid', 'Ledge', 'Spool max Ø', 'Spool play front/back',
                'Spool play floor/top', 'Spool slot', 'Axle', 'Inserts')
 FILL_ONE = 'This slot'
 FILL_COLUMN = 'Whole column'
@@ -206,15 +206,15 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     form.length(g, 'floor', 'Floor thickness', p, units, minimum=0.08, maximum=0.5)
     form.length(g, 'front', 'Front thickness', p, units, minimum=0.1, maximum=1.0)
     form.length(g, 'frontGap', 'Gap between fronts', p, units, minimum=0.0, maximum=0.3)
-    form.boolean(g, 'snapTongue', 'Snap tongue (experimental)', p,
-                 'Spring tongue in each side wall with a hook that clicks into the cabinet\'s catch when '
-                 'closed (needs Snap catches on the cabinet). Press it in from inside to take the insert out '
-                 'without force.')
     form.choice(g, 'stop', 'Pull-out stop', p, L.STOP_MODES,
-                'Catches on the cabinet\'s detent bump at the end of the travel.\n'
-                'Hard: a vertical face - lift the insert a little to take it out (ledges).\n'
-                'Like the detent: pull firmly to take it out.\n'
-                'Auto: hard on ledges, like the detent in grooves.')
+                'Side bump: a nose at the back of each side wall stops at a bump just behind the cabinet '
+                'front, tilted or not; pull firmly to take the insert out (the walls give a little).\n'
+                'Top catch (ledges): a nose on the rim at the back hits a tooth under the ledge above when '
+                'the insert tilts; hold it level to take it out.\n'
+                'Both need Stop bumps on the cabinet.\n'
+                'Hard / Like the detent: older stops at the bottom.\n'
+                'Auto: side bump plus a stop at the bottom / in the groove (like the detent in grooves, '
+                'hard on ledges) if the cabinet has stop bumps; else hard (ledges) / like the detent.')
     form.unitless(g, 'detentHold', 'Detent hold angle (°)', p,
                   tooltip='Steepness of the flank that keeps the insert closed (degrees, steeper = holds better)')
     form.unitless(g, 'detentRamp', 'Detent push-in ramp (°)', p,
@@ -439,7 +439,6 @@ def _syncVisibility(inputs):
     form.setVisible(inputs, 'span', bool(cab and cab['grooved']))
     for inputId in ('stop', 'detentHold', 'detentRamp'):
         form.setVisible(inputs, inputId, bool(cp and cp.get('detent')))
-    form.setVisible(inputs, 'snapTongue', bool(cp and cp.get('snapCatch')))
     form.setVisible(inputs, 'frontGap', p['frontStyle'] == L.FRONT_OVERLAY)
     drawer = p['insertType'] == L.INSERT_DRAWER
     form.setVisible(inputs, 'interior', drawer)
@@ -517,14 +516,6 @@ def _updateInfo(inputs):
             'Inside': '{} x {} x {} mm'.format(mm(innerW), mm(innerL), mm(innerH)),
         }
         problems = list(ins['errors'])
-        if (p.get('snapTongue') and cab.get('snap') and not ins['blank']):
-            bands = L.snapBands(cab, ins['slot']['row'] - 1)
-            missing = [s for s in ('left', 'right') if bands[s] is None]
-            if missing:
-                problems.append('Note: no snap tongue on the {} side - the row is too low for it'.format(
-                    ' and '.join(missing)))
-            else:
-                values['Snap tongue'] = 'both sides, {} mm behind the front'.format(mm(L.SNAP_Y0))
         if (p['interior'] == L.INTERIOR_COMPARTMENTS and not ins['blank']
                 and (int(p['divX']) > 1 or int(p['divY']) > 1)):
             # Same split as the geometry: equal compartments, walls in between.
@@ -659,7 +650,8 @@ def command_execute(args: adsk.core.CommandEventArgs):
             return
         cf, cp, cab = _cabinet(inputs)
         p = _params(inputs)
-        _lastParams = dict(p)
+        # New drawers start like the last one, but without wire outlets.
+        _lastParams = dict(p, wireHoles=0)
         if _editedFeature is not None:
             _setEditedVisibility(True)
             stored = box.INSERT.readParams(_editedFeature) or {}

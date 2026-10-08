@@ -28,10 +28,11 @@ kF, kB = k(L.BUMP_FRONT_ANGLE), k(L.BUMP_BACK_ANGLE)
 c = L.DETENT_CLEARANCE
 
 for guide in (L.GUIDE_LEDGE, L.GUIDE_GROOVE):
-    cp = dict(L.CABINET_DEFAULTS, unitsW=2, unitsL=3, rows=2, guide=guide, topMount=L.TOP_MOUNT_FIXED)
+    cp = dict(L.CABINET_DEFAULTS, unitsW=2, unitsL=3, rows=2, guide=guide, topMount=L.TOP_MOUNT_FIXED,
+              stopParts=False)          # bottom stops (side bump / top catch: t_stops)
     cab = L.cabinet(cp)
     R = cab['detentR']
-    assert abs(R - 0.08) < 1e-9, R
+    assert abs(R - L.DETENT_HEIGHT) < 1e-9, R
     yd = cab['detentY']
     cabinet = G.buildCabinet(None, cp)
     xa, xb, z = L.contactStrips(cab, 0, 1)[0]
@@ -82,6 +83,24 @@ for guide in (L.GUIDE_LEDGE, L.GUIDE_GROOVE):
             for hh in (0.1 * R, 0.5 * R, 0.9 * R):
                 yy = yd - kF * (R - hh) + f * (kF + kB) * (R - hh)
                 check(f'{n}: tooth clear of the notch', body, (x, yy, z + hh), False)
+# Grooves: notch roof and tooth follow the 45 deg flank across the whole strip.
+cp = dict(L.CABINET_DEFAULTS, unitsW=2, unitsL=3, rows=2, guide=L.GUIDE_GROOVE, topMount=L.TOP_MOUNT_FIXED,
+          stopParts=False)
+cab = L.cabinet(cp)
+R = cab['detentR']
+yd = cab['detentY']
+cabinet = G.buildCabinet(None, cp)
+ip = dict(L.INSERT_DEFAULTS, column=1, row=2, stop=L.STOP_OFF, interior=L.INTERIOR_EMPTY)
+body = G.buildInsertParts(None, cp, ip)[0]
+for (xa, xb, z), slope in zip(L.contactStrips(cab, 0, 1), (1.0, -1.0)):
+    xm = (xa + xb) / 2
+    for f in (0.1, 0.3, 0.5, 0.7, 0.9):
+        x = xa + f * (xb - xa)
+        zf = z - slope * (x - xm)                       # flank height here
+        check(f'groove: tooth tip follows the flank (f={f})', cabinet, (x, yd, zf + 0.85 * R), True)
+        check(f'groove: notch open over the tooth (f={f})', body, (x, yd, zf + 0.95 * R), False)
+        if 0.2 < f < 0.8:                               # the runner ends short of the groove tip
+            check(f'groove: notch roof parallel to the flank (f={f})', body, (x, yd, zf + R + c + 0.03), True)
 if L.withDefaults({'stop': True}, L.INSERT_DEFAULTS)['stop'] != L.STOP_AUTO or \
         L.withDefaults({'stop': False}, L.INSERT_DEFAULTS)['stop'] != L.STOP_OFF:
     fails += 1; print('FAIL legacy stop checkbox mapping')

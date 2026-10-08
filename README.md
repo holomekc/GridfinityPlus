@@ -47,8 +47,15 @@ editable after the fact.
   height* takes any height in mm. The height unit itself can be changed too (e.g. 5 mm), as long as at least 1 mm of
   bin body is left above the feet.
 - **Editable afterwards** as a custom feature, like plates.
-- **Better preview** for hollow (shows compartments / dividers) and shelled bins. Compartment settings only show up for
-  hollow bins, where they actually apply.
+- **Better preview** for hollow (shows compartments / dividers, scoops and label tabs) and shelled bins. Compartment
+  settings only show up for hollow bins, where they actually apply.
+- **Fast:** compartments, scoops and labels of hollow bins are built in memory; only the outside (feet, walls, lip)
+  is built with Fusion features, once per size - changing compartments or labels is instant.
+- **Label type** per bin (on every compartment), each with its own settings: the original *label tab*; a narrow
+  *sticker strip* on the dividers and / or along the front wall (flat strip with a sticker recess - hardly in the way
+  when taking things out); a *wall sticker* recess in the outside front face and / or inside each compartment on its back wall; a *paper slot* strip (channel with
+  45° lips: bow a paper strip and click it in). Everything prints without supports.
+- **Divider drop:** how far the dividers (and the labels on them) stay below the rim - 0.5 mm by default, 0 = flush.
 
 ### Tool cutout (new command, *Modify* panel)
 
@@ -69,12 +76,28 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 - **Slide-in top** (default): the top is a plate of its own that slides in from the front on undercut rails along the
   side walls and stops at the back. The cabinet prints standing with nothing to bridge (feet on the bed), the plate
   prints flat with its grid pockets facing up. *Fixed* keeps the one-piece top. Flat and grid plates are equally
-  thick, so cabinets of the same height match outside and inside, whatever their top.
+  thick, so cabinets of the same height match outside and inside, whatever their top. *Top plate lock*: *Held from
+  outside* (default): the rails lean inwards and the plate grips them from both sides (its edge stays flush with the
+  outside), so the side walls cannot bend outwards and let go of the plate. *Top plate rail* makes the rail thicker (the plate
+  itself never changes): about 0.6 mm with 1.2 mm walls, 1.2 mm in grooved cabinets (3.2 mm walls), more with a
+  flat top. *Inside rails* is the older variant
+  (undercut inwards).
+- **Slide-on feet** (*Feet*: *Slide-on feet*, for printing the cabinet **on its back**): one Gridfinity foot per cell
+  as a part of its own, printed like a bin's (magnets upright). The cabinet gets a flat bottom with a dovetail head
+  under each cell, running front to back (printed on its back the profile just rises, the ends are chamfered 45°); set a
+  foot on beside its head and push it the dovetail length (16 mm, adjustable like its width) to the front or back
+  until it clicks at the stop. The push direction alternates per column (held both ways in a baseplate); the first
+  column is pushed backwards, its stops at the front - with a single column the cabinet only comes off moved
+  backwards, toward the wall. Mount each column from its far end. With several rows the dovetail is at most about
+  17 mm long (a foot is set on inside its own cell). Printed on its back, the fixed top
+  is just a wall (no bridges) and holds the side walls together; hooked grooves become possible too. Partial cells get
+  no foot.
 - Columns (vertical dividers) and rows (equal, or weighted like `1,1,2`).
 - Guides: **ledges** (inserts rest on shelf strips) or **grooves** (V-grooves, inserts carry runners; an insert can
-  span several rows).
-- Optional click detent (bump 0.8 mm by default, adjustable), adjustable walls (1.2 mm default) and insert
-  clearances.
+  span several rows) or **hooked grooves** (the runners hook behind a lip in the walls, so the inserts hold the walls
+  together and the stops keep working on big cabinets; *print the cabinet on its back* with the fixed top).
+- Optional click detent (bump 0.4 mm by default, adjustable), adjustable walls (1.2 mm default) and insert
+  clearances, including a separate groove clearance (0.2 mm per flank) so inserts do not wobble in the V-grooves.
 - Wall mount: screw holes in the back wall for M2–M6, countersunk or pan / cheese head, 1–2 rows, 1–6 holes per row,
   distances from the sides / top / bottom. The back wall gets just thick enough for the head to sit flush inside, so
   the drawers still close (they get a little shorter).
@@ -111,12 +134,10 @@ Known limitation: openings that point downward (e.g. a hollow nozzle tip) can le
 - Detent: the cabinet's bump is a tooth with a flat ramp in front and a steep edge behind. The insert slides in over
   ramps (also at its back end when it is put in) and a steep flank holds it shut, also with the cabinet tilted
   forward; both insert angles adjustable.
-- **Experimental**, off by default: snap tongue. A spring tongue in each side wall of the insert clicks into a catch
-  in the cabinet wall when it is closed. Not print-tested yet: the hook and the catches have overhangs that may not
-  print cleanly, and the tongue leaves open slots in the insert's side walls (small parts can get stuck there). Turn
-  on *Snap catches* on the cabinet and *Snap tongue* on the insert to try it.
-- Pull-out stop: *hard* (vertical face, lift the insert a little to take it out; default with ledges), *like the
-  detent* (pull firmly; default with grooves) or off. *Show pulled out* moves the insert out for viewing.
+- Pull-out stop (being tested): *side bump* (default) - a nose at the back of each side wall stops at a bump just
+  behind the cabinet front, tilted or not; pull firmly to take the insert out. *Top catch* (ledges) - a nose on the
+  rim hits a tooth under the ledge above when the insert tilts; hold it level to take it out. Both need *Stop bumps*
+  on the cabinet (default for new cabinets). Older stops at the bottom: *hard*, *like the detent*.
 - Click a cabinet's front: that picks the cabinet (like selecting a body) and the slot in one go. Or fill a whole
   column or the whole cabinet at once, or use *Picked slots*: every click on the front adds or removes a slot.
 

@@ -71,9 +71,9 @@ check('ledge chamfer root', body, (0.25, 6, r2 - 0.25), True)
 check('right ledge under chamfer', body, (cab['columns'][0][1] - 0.25, 6, r2 - 0.25), False)
 check('right ledge root', body, (cab['columns'][0][1] - 0.05, 6, r2 - 0.25), True)
 check('no ledge in middle', body, (4, 6, r2 - 0.05), False)
-check('bump ledge', body, (0.375, 0.6, r2 + 0.04), True)
+check('bump ledge', body, (0.375, 0.6, r2 + 0.02), True)
 check('no bump behind', body, (0.375, 2.0, r2 + 0.04), False)
-check('bump floor', body, (0.375, 0.6, 0.2 + 0.04), True)
+check('bump floor', body, (0.375, 0.6, 0.2 + 0.02), True)
 check('top pocket', body, (2.075, 2.1, cab['zTop'] - 0.2), False)
 check('top roof', body, (2.075, 2.1, cab['ceil'] + 0.1), True)
 check('foot', body, (2.0, 2.0, -0.2), True)
@@ -94,7 +94,7 @@ for row in (1, 2, 3):
             fails += 1
             print('FAIL collision ledge pulled', row, typ, h)
 
-ip = dict(INS0, row=2, frontStyle=L.FRONT_OVERLAY, handle=L.HANDLE_NONE, label=L.LABEL_NONE)
+ip = dict(INS0, row=2, frontStyle=L.FRONT_OVERLAY, handle=L.HANDLE_NONE, label=L.LABEL_NONE, stop=L.STOP_HARD)
 ins = L.insert(cab, ip)
 ib = G.buildInsert(None, cp, ip)
 z0 = ins['z0']
@@ -310,7 +310,7 @@ ip = dict(INS0, column=1, row=1)
 ins = L.insert(gcab, ip)
 ib = G.buildInsert(None, gp, ip)
 check('runner in groove', ib, (x0 - 0.05, 6, gc), True)
-check('runner clear of flank', ib, (x0 - 0.05, 6, gc + 0.17), False)
+check('runner clear of flank', ib, (x0 - 0.05, 6, gc + 0.19), False)
 
 # no feet, flat top, grid interior in a wide cabinet
 fp = dict(CAB0, feet=False, topType=L.TOP_FLAT, unitsW=3, unitsL=3, rows=2)
@@ -340,7 +340,7 @@ check('ovh front open', obody, (2.0, -0.45, 1.0), False)
 check('ovh front side wall', obody, (-0.9, 0.0, 1.0), True)
 check('partial foot', obody, (-0.5, 2.0, -0.2), True)
 check('partial foot clipped', obody, (-1.5, 2.0, -0.2), False)
-check('ovh bump at new front', obody, (ocab['columns'][0][0] + 0.175, -0.5 + 0.6, ocab['rows'][1]['bottom'] + 0.04), True)
+check('ovh bump at new front', obody, (ocab['columns'][0][0] + 0.175, -0.5 + 0.6, ocab['rows'][1]['bottom'] + 0.02), True)
 for col in (1, 2):
     for row in (1, 2):
         ip = dict(INS0, column=col, row=row)

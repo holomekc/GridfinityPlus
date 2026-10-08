@@ -27,6 +27,7 @@ from ...lib.gridfinityUtils import binFeature
 from ...lib.gridfinityUtils import viewRay
 from ...lib.gridfinityUtils import binCutout
 from ...lib.gridfinityUtils import binFastPreview
+from ...lib.gridfinityUtils import binInterior
 from ...lib.gridfinityUtils import gplog
 from ...lib.gridfinityUtils.previewGraphics import PreviewGraphics
 from ...lib.ui.commandUiState import CommandUiState
@@ -115,6 +116,21 @@ BIN_TAB_LENGTH_INPUT_ID = 'bin_tab_length'
 BIN_TAB_WIDTH_INPUT_ID = 'bin_tab_width'
 BIN_TAB_POSITION_INPUT_ID = 'bin_tab_position'
 BIN_TAB_ANGLE_INPUT_ID = 'bin_tab_angle'
+BIN_LABEL_TYPE_ID = 'bin_label_type'
+BIN_LABEL_ON_ID = 'bin_label_on'
+BIN_LABEL_STRIP_WIDTH_ID = 'bin_label_strip_width'
+BIN_LABEL_DEPTH_ID = 'bin_label_depth'
+BIN_LABEL_FRONT_HEIGHT_ID = 'bin_label_front_height'
+BIN_DIVIDER_DROP_ID = 'bin_divider_drop'
+BIN_LABEL_WALL_ON_ID = 'bin_label_wall_on'
+BIN_LABEL_LENGTH_ID = 'bin_label_length'
+# Which inputs each label type shows (the type dropdown always shows).
+_LABEL_INPUTS = {
+    'tab': (BIN_TAB_LENGTH_INPUT_ID, BIN_TAB_WIDTH_INPUT_ID, BIN_TAB_POSITION_INPUT_ID, BIN_TAB_ANGLE_INPUT_ID),
+    'strip': (BIN_LABEL_ON_ID, BIN_LABEL_STRIP_WIDTH_ID, BIN_LABEL_LENGTH_ID, BIN_LABEL_DEPTH_ID),
+    'wall': (BIN_LABEL_WALL_ON_ID, BIN_LABEL_FRONT_HEIGHT_ID, BIN_LABEL_LENGTH_ID, BIN_LABEL_DEPTH_ID),
+    'slot': (BIN_LABEL_ON_ID, BIN_LABEL_STRIP_WIDTH_ID),
+}
 BIN_WITH_LIP_INPUT_ID = 'with_lip'
 BIN_WITH_LIP_NOTCHES_INPUT_ID = 'with_lip_notches'
 BIN_COMPARTMENT_REAL_DIMENSIONS_TABLE = "compartment_real_dimensions"
@@ -241,6 +257,14 @@ def initDefaultUiState():
     commandUIState.initValue(BIN_TAB_WIDTH_INPUT_ID, const.BIN_TAB_WIDTH, adsk.core.ValueCommandInput.classType())
     commandUIState.initValue(BIN_TAB_POSITION_INPUT_ID, 0, adsk.core.ValueCommandInput.classType())
     commandUIState.initValue(BIN_TAB_ANGLE_INPUT_ID, '45 deg', adsk.core.ValueCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_TYPE_ID, binInterior.LABEL_NONE, adsk.core.DropDownCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_ON_ID, binInterior.ON_BOTH, adsk.core.DropDownCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_STRIP_WIDTH_ID, 0.8, adsk.core.ValueCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_DEPTH_ID, 0.02, adsk.core.ValueCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_WALL_ON_ID, binInterior.WALL_BOTH, adsk.core.DropDownCommandInput.classType())
+    commandUIState.initValue(BIN_DIVIDER_DROP_ID, const.BIN_TAB_TOP_CLEARANCE, adsk.core.ValueCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_FRONT_HEIGHT_ID, binInterior.TAPE_HEIGHT, adsk.core.ValueCommandInput.classType())
+    commandUIState.initValue(BIN_LABEL_LENGTH_ID, 0.0, adsk.core.ValueCommandInput.classType())
 
     commandUIState.initValue(BIN_GENERATE_BASE_INPUT_ID, True, adsk.core.BoolValueCommandInput.classType())
     commandUIState.initValue(BIN_SCREW_HOLES_INPUT_ID, False, adsk.core.BoolValueCommandInput.classType())
@@ -261,6 +285,7 @@ def initDefaultUiState():
 
             try:
                 commandUIState.initValues(staticUiState)
+                _fixLabelType(staticUiState)
                 futil.log(f'{CMD_NAME} Successfully restored default values')
             except Exception as err:
                 futil.log(f'{CMD_NAME} Failed to restore default values, err: {err}')
@@ -653,6 +678,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         try:
             if 'geom' in seed:
                 commandUIState.initValues(seed['geom'])
+                _fixLabelType(seed['geom'])
             commandCompartmentsTableUIState = []
             for row in seed.get('compartmentsTable', []):
                 commandCompartmentsTableUIState.append(CommandUiState(CMD_NAME))
@@ -667,6 +693,7 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         try:
             if 'geom' in storedParams:
                 commandUIState.initValues(storedParams['geom'])
+                _fixLabelType(storedParams['geom'])
             commandCompartmentsTableUIState = []
             for row in storedParams.get('compartmentsTable', []):
                 commandCompartmentsTableUIState.append(CommandUiState(CMD_NAME))
@@ -861,6 +888,13 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     commandUIState.registerCommandInput(binCompartmentsWidthInput)
     binCompartmentsLengthInput = compartmentsGroup.children.addIntegerSpinnerCommandInput(BIN_COMPARTMENTS_GRID_BASE_LENGTH_ID, "Divisions deep", 1, 100, 1, commandUIState.getState(BIN_COMPARTMENTS_GRID_BASE_LENGTH_ID))
     commandUIState.registerCommandInput(binCompartmentsLengthInput)
+    dividerDropInput = compartmentsGroup.children.addValueInput(
+        BIN_DIVIDER_DROP_ID, 'Divider drop', defaultLengthUnits,
+        adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_DIVIDER_DROP_ID)))
+    dividerDropInput.minimumValue, dividerDropInput.maximumValue = 0.0, 1.0
+    dividerDropInput.tooltip = ('How far the dividers (and labels on them) stay below the rim. '
+                                'Default 0.5 mm; 0 = flush with the rim.')
+    commandUIState.registerCommandInput(dividerDropInput)
     render_actual_compartment_dimension_units_table(compartmentsGroup.children)
 
     compartmentGridDropdown = compartmentsGroup.children.addDropDownCommandInput(BIN_COMPARTMENTS_GRID_TYPE_ID, "Layout", adsk.core.DropDownStyles.LabeledIconDropDownStyle)
@@ -881,26 +915,61 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
         if not input.id == BIN_HAS_SCOOP_INPUT_ID:
             input.isEnabled = commandUIState.getState(BIN_HAS_SCOOP_INPUT_ID)
 
-    binTabFeaturesGroup = compartmentsGroup.children.addGroupCommandInput(BIN_TAB_FEATURES_GROUP_ID, 'Label tab')
+    binTabFeaturesGroup = compartmentsGroup.children.addGroupCommandInput(BIN_TAB_FEATURES_GROUP_ID, 'Labels')
     binTabFeaturesGroup.isExpanded = commandUIState.getState(BIN_TAB_FEATURES_GROUP_ID)
     commandUIState.registerCommandInput(binTabFeaturesGroup)
-    generateTabCheckboxinput = binTabFeaturesGroup.children.addBoolValueInput(BIN_HAS_TAB_INPUT_ID, 'Label tab (back)', True, '', commandUIState.getState(BIN_HAS_TAB_INPUT_ID))
+    labels = binTabFeaturesGroup.children
+    labelTypeInput = labels.addDropDownCommandInput(BIN_LABEL_TYPE_ID, 'Label type', adsk.core.DropDownStyles.TextListDropDownStyle)
+    _fillDropdown(labelTypeInput, binInterior.LABEL_TYPES, commandUIState.getState(BIN_LABEL_TYPE_ID))
+    labelTypeInput.tooltip = ('One label per compartment.\n'
+                              'Label tab: the original Gridfinity tab on the back wall.\n'
+                              'Sticker strip: a narrow flat strip on the dividers and / or along the front wall, '
+                              'with a recess for a sticker or tape - hardly in the way when taking things out.\n'
+                              'Angled label: a small face at the front of each compartment, leaning towards you.\n'
+                              'Wall sticker: a recess for a sticker in the outside front face and / or inside '
+                              'each compartment on its back wall.\n'
+                              'Paper slot: a strip with a channel and 45 deg lips; bow a paper strip and click it in.')
+    commandUIState.registerCommandInput(labelTypeInput)
+    # The original tab switch stays (stored bins, shelled bins) but follows the type.
+    generateTabCheckboxinput = labels.addBoolValueInput(BIN_HAS_TAB_INPUT_ID, 'Label tab (back)', True, '', commandUIState.getState(BIN_HAS_TAB_INPUT_ID))
+    generateTabCheckboxinput.isVisible = False
     commandUIState.registerCommandInput(generateTabCheckboxinput)
-    binTabLengthInput = binTabFeaturesGroup.children.addValueInput(BIN_TAB_LENGTH_INPUT_ID, 'Length (cells)', '', adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_TAB_LENGTH_INPUT_ID)))
+    binTabLengthInput = labels.addValueInput(BIN_TAB_LENGTH_INPUT_ID, 'Length (cells)', '', adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_TAB_LENGTH_INPUT_ID)))
     commandUIState.registerCommandInput(binTabLengthInput)
-    binTabWidthInput = binTabFeaturesGroup.children.addValueInput(BIN_TAB_WIDTH_INPUT_ID, 'Width', defaultLengthUnits, adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_TAB_WIDTH_INPUT_ID)))
+    binTabWidthInput = labels.addValueInput(BIN_TAB_WIDTH_INPUT_ID, 'Width', defaultLengthUnits, adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_TAB_WIDTH_INPUT_ID)))
     commandUIState.registerCommandInput(binTabWidthInput)
-    binTabPostionInput = binTabFeaturesGroup.children.addValueInput(BIN_TAB_POSITION_INPUT_ID, 'Offset from left (cells)', '', adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_TAB_POSITION_INPUT_ID)))
+    binTabPostionInput = labels.addValueInput(BIN_TAB_POSITION_INPUT_ID, 'Offset from left (cells)', '', adsk.core.ValueInput.createByReal(commandUIState.getState(BIN_TAB_POSITION_INPUT_ID)))
     commandUIState.registerCommandInput(binTabPostionInput)
-    tabObverhangAngleInput = binTabFeaturesGroup.children.addValueInput(BIN_TAB_ANGLE_INPUT_ID, 'Overhang angle', 'deg', adsk.core.ValueInput.createByString(str(commandUIState.getState(BIN_TAB_ANGLE_INPUT_ID))))
+    tabObverhangAngleInput = labels.addValueInput(BIN_TAB_ANGLE_INPUT_ID, 'Overhang angle', 'deg', adsk.core.ValueInput.createByString(str(commandUIState.getState(BIN_TAB_ANGLE_INPUT_ID))))
     tabObverhangAngleInput.minimumValue = math.radians(30)
     tabObverhangAngleInput.isMinimumInclusive = True
     tabObverhangAngleInput.maximumValue = math.radians(65)
     tabObverhangAngleInput.isMaximumInclusive = True
     commandUIState.registerCommandInput(tabObverhangAngleInput)
-    for input in binTabFeaturesGroup.children:
-        if not input.id == BIN_HAS_TAB_INPUT_ID:
-            input.isEnabled = commandUIState.getState(BIN_HAS_TAB_INPUT_ID)
+    labelOnInput = labels.addDropDownCommandInput(BIN_LABEL_ON_ID, 'On', adsk.core.DropDownStyles.TextListDropDownStyle)
+    _fillDropdown(labelOnInput, binInterior.LABEL_ON, commandUIState.getState(BIN_LABEL_ON_ID))
+    labelOnInput.tooltip = 'Dividers: the walls between front and back compartments. Front wall: along the front of the bin.'
+    commandUIState.registerCommandInput(labelOnInput)
+    wallOnInput = labels.addDropDownCommandInput(BIN_LABEL_WALL_ON_ID, 'On', adsk.core.DropDownStyles.TextListDropDownStyle)
+    _fillDropdown(wallOnInput, binInterior.WALL_ON, commandUIState.getState(BIN_LABEL_WALL_ON_ID))
+    wallOnInput.tooltip = ('Front face: outside, on the front of the bin. Compartments: inside each compartment, '
+                           'on its back wall (the face you look at).')
+    commandUIState.registerCommandInput(wallOnInput)
+    for inputId, label, lo, hi, tip in (
+            (BIN_LABEL_STRIP_WIDTH_ID, 'Strip width', 0.3, 2.0, 'Width of the flat strip'),
+            (BIN_LABEL_FRONT_HEIGHT_ID, 'Label height', 0.3, 5.0,
+             'Height of the sticker recess. Default 12.5 mm for 12 mm label tape '
+             '(Brother / Dymo tapes: 6, 9, 12, 18/19, 24 mm - add 0.5 mm).'),
+            (BIN_LABEL_LENGTH_ID, 'Label length', 0.0, 30.0,
+             '0 = auto: the whole width of the compartment. A length that leaves less than 5 mm '
+             'free runs the whole width too.'),
+            (BIN_LABEL_DEPTH_ID, 'Sticker recess', 0.0, 0.06, 'Depth of the recess for the sticker (0 = flat)')):
+        inp = labels.addValueInput(inputId, label, defaultLengthUnits,
+                                   adsk.core.ValueInput.createByReal(commandUIState.getState(inputId)))
+        inp.minimumValue, inp.maximumValue = lo, hi
+        inp.tooltip = tip
+        commandUIState.registerCommandInput(inp)
+    _syncLabelInputs()
 
     baseFeaturesGroup = inputs.addGroupCommandInput(BIN_BASE_FEATURES_GROUP_ID, 'Base')
     baseFeaturesGroup.isExpanded = commandUIState.getState(BIN_BASE_FEATURES_GROUP_ID)
@@ -1031,6 +1100,8 @@ _GEOMETRY_INPUT_IDS = [
     BIN_HAS_SCOOP_INPUT_ID, BIN_SCOOP_MAX_RADIUS_INPUT_ID,
     BIN_HAS_TAB_INPUT_ID, BIN_TAB_LENGTH_INPUT_ID, BIN_TAB_WIDTH_INPUT_ID,
     BIN_TAB_POSITION_INPUT_ID, BIN_TAB_ANGLE_INPUT_ID,
+    BIN_LABEL_STRIP_WIDTH_ID, BIN_LABEL_DEPTH_ID, BIN_LABEL_FRONT_HEIGHT_ID, BIN_DIVIDER_DROP_ID,
+    BIN_LABEL_LENGTH_ID,
     BIN_COMPARTMENTS_GRID_BASE_WIDTH_ID, BIN_COMPARTMENTS_GRID_BASE_LENGTH_ID,
 ]
 
@@ -1040,7 +1111,8 @@ def _geomCacheKey(inputs) -> str:
     for inputId in _GEOMETRY_INPUT_IDS:
         item = inputs.itemById(inputId)
         values.append(item.value if item else None)
-    for dropdownId in (BIN_TYPE_DROPDOWN_ID, BIN_COMPARTMENTS_GRID_TYPE_ID):
+    for dropdownId in (BIN_TYPE_DROPDOWN_ID, BIN_COMPARTMENTS_GRID_TYPE_ID, BIN_LABEL_TYPE_ID, BIN_LABEL_ON_ID,
+                       BIN_LABEL_WALL_ON_ID):
         dropdown = inputs.itemById(dropdownId)
         values.append(dropdown.selectedItem.name if dropdown and dropdown.selectedItem else None)
     table: adsk.core.TableCommandInput = inputs.itemById(BIN_COMPARTMENTS_TABLE_ID)
@@ -1336,6 +1408,10 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
         cache_compartments_table_state(inputs)
     else:
         commandUIState.onInputUpdate(changed_input)
+        if changed_input.id == BIN_LABEL_TYPE_ID:
+            # The original tab switch follows the type (stored params, shelled bins).
+            commandUIState.updateValue(BIN_HAS_TAB_INPUT_ID,
+                                       commandUIState.getState(BIN_LABEL_TYPE_ID) == binInterior.LABEL_TAB)
         refreshUi()
 
     if isinstance(changed_input, adsk.core.GroupCommandInput) and changed_input.isExpanded == True:
@@ -1407,6 +1483,37 @@ def refreshCompartmentsTable():
     append_compartments_from_state()
 
 
+_LABEL_KIND = {binInterior.LABEL_TAB: 'tab', binInterior.LABEL_STRIP: 'strip',
+               binInterior.LABEL_WALL: 'wall', binInterior.LABEL_SLOT: 'slot'}
+
+
+def _fillDropdown(dropdown, names, selected):
+    for name in names:
+        dropdown.listItems.add(name, name == selected)
+    if dropdown.selectedItem is None:
+        dropdown.listItems.item(0).isSelected = True
+
+
+def _syncLabelInputs():
+    """Show only the settings of the chosen label type."""
+    kind = _LABEL_KIND.get(commandUIState.getState(BIN_LABEL_TYPE_ID))
+    shown = set(_LABEL_INPUTS.get(kind, ()))
+    for ids in _LABEL_INPUTS.values():
+        for inputId in ids:
+            if inputId in commandUIState.commandInputs:
+                inp = commandUIState.getInput(inputId)
+                inp.isVisible = inputId in shown
+                inp.isEnabled = True
+
+
+def _fixLabelType(geom: dict):
+    """Bins from before the label types: the tab switch decides."""
+    if geom and BIN_LABEL_TYPE_ID not in geom:
+        tab = geom.get(BIN_HAS_TAB_INPUT_ID)
+        tab = tab.get('value') if isinstance(tab, dict) else tab
+        commandUIState.updateValue(BIN_LABEL_TYPE_ID, binInterior.LABEL_TAB if tab else binInterior.LABEL_NONE)
+
+
 def onChangeValidate():
     global commandUIState
 
@@ -1423,11 +1530,8 @@ def onChangeValidate():
     commandUIState.getInput(BIN_WALL_THICKNESS_INPUT_ID).isEnabled = generateBody and not binType == BIN_TYPE_SOLID
     commandUIState.getInput(BIN_WITH_LIP_INPUT_ID).isEnabled = generateBody
     commandUIState.getInput(BIN_WITH_LIP_NOTCHES_INPUT_ID).isEnabled = generateBody
-    commandUIState.getInput(BIN_HAS_TAB_INPUT_ID).isEnabled = generateBody
-    generateTab: bool = commandUIState.getState(BIN_HAS_TAB_INPUT_ID)
-    for input in commandUIState.getInput(BIN_TAB_FEATURES_GROUP_ID).children:
-        if not input.id == BIN_HAS_TAB_INPUT_ID:
-            input.isEnabled = generateBody and generateTab
+    commandUIState.getInput(BIN_LABEL_TYPE_ID).isEnabled = generateBody
+    _syncLabelInputs()
 
     generateLip: bool = commandUIState.getState(BIN_WITH_LIP_INPUT_ID)
     commandUIState.getInput(BIN_WITH_LIP_NOTCHES_INPUT_ID).isEnabled = generateLip
@@ -1435,11 +1539,6 @@ def onChangeValidate():
     generateScoop: bool = commandUIState.getState(BIN_HAS_SCOOP_INPUT_ID)
     commandUIState.getInput(BIN_SCOOP_MAX_RADIUS_INPUT_ID).isEnabled = generateScoop
 
-    generateTab: bool = commandUIState.getState(BIN_HAS_TAB_INPUT_ID)
-    commandUIState.getInput(BIN_TAB_LENGTH_INPUT_ID).isEnabled = generateTab
-    commandUIState.getInput(BIN_TAB_WIDTH_INPUT_ID).isEnabled = generateTab
-    commandUIState.getInput(BIN_TAB_ANGLE_INPUT_ID).isEnabled = generateTab
-    commandUIState.getInput(BIN_TAB_POSITION_INPUT_ID).isEnabled = generateTab
 
     compartmentsGridType: str = commandUIState.getState(BIN_COMPARTMENTS_GRID_TYPE_ID)
     commandUIState.getInput(BIN_COMPARTMENTS_TABLE_ID).isVisible = compartmentsGridType == BIN_COMPARTMENTS_GRID_TYPE_CUSTOM
@@ -1502,6 +1601,96 @@ def buildBinBodyFromParams(des: adsk.fusion.Design, params: dict):
     return _getBinTempBody(des, _StoredInputs(params.get('geom'), params.get('compartmentsTable')), key, ovh)
 
 
+def interiorSpec(inputs, ovh) -> dict:
+    """Everything binInterior needs, from the dialog (or stored) inputs."""
+    v = lambda i: inputs.itemById(i).value
+    baseW, baseL, cl = v(BIN_BASE_WIDTH_UNIT_INPUT_ID), v(BIN_BASE_LENGTH_UNIT_INPUT_ID), v(BIN_XY_CLEARANCE_INPUT_ID)
+    binW, binL, binH = int(v(BIN_WIDTH_INPUT_ID)), int(v(BIN_LENGTH_INPUT_ID)), float(v(BIN_HEIGHT_INPUT_ID))
+    heightUnit = v(BIN_HEIGHT_UNIT_INPUT_ID)
+    ovL, ovR = float(ovh.get('left', 0)), float(ovh.get('right', 0))
+    ovF, ovB = float(ovh.get('front', 0)), float(ovh.get('back', 0))
+    cx, cy = int(v(BIN_COMPARTMENTS_GRID_BASE_WIDTH_ID)), int(v(BIN_COMPARTMENTS_GRID_BASE_LENGTH_ID))
+    layout = inputs.itemById(BIN_COMPARTMENTS_GRID_TYPE_ID)
+    if layout.selectedItem.name == BIN_COMPARTMENTS_GRID_TYPE_UNIFORM:
+        comps = [(i, j, 1, 1, 1e9) for i in range(cx) for j in range(cy)]
+    else:
+        table = inputs.itemById(BIN_COMPARTMENTS_TABLE_ID)
+        comps = []
+        for i in range(1, table.rowCount):
+            row = [table.getInputAtPosition(i, j).value for j in range(5)]
+            comps.append((int(row[0]), int(row[1]), int(row[2]), int(row[3]), float(row[4])))
+    return {
+        'x0': -ovL, 'x1': binW * baseW - 2 * cl + ovR, 'y0': -ovF, 'y1': binL * baseL - 2 * cl + ovB,
+        'bodyH': (binH - 1) * heightUnit + max(0.0, heightUnit - const.BIN_BASE_HEIGHT),
+        'wall': v(BIN_WALL_THICKNESS_INPUT_ID), 'cl': cl,
+        'radius': const.BIN_CORNER_FILLET_RADIUS - cl,
+        'hasLip': bool(v(BIN_WITH_LIP_INPUT_ID)), 'hasScoop': bool(v(BIN_HAS_SCOOP_INPUT_ID)),
+        'scoopR': v(BIN_SCOOP_MAX_RADIUS_INPUT_ID),
+        'hasTab': bool(v(BIN_HAS_TAB_INPUT_ID)), 'tabLength': v(BIN_TAB_LENGTH_INPUT_ID),
+        'tabWidth': v(BIN_TAB_WIDTH_INPUT_ID), 'tabPosition': v(BIN_TAB_POSITION_INPUT_ID),
+        'tabAngle': v(BIN_TAB_ANGLE_INPUT_ID),
+        'units': binW, 'unitW': baseW + (ovL + ovR) / binW,
+        'countX': cx, 'countY': cy, 'compartments': comps,
+        # Bins from before the label types: the tab switch decides.
+        'labelType': _choice(inputs, BIN_LABEL_TYPE_ID,
+                             binInterior.LABEL_TAB if v(BIN_HAS_TAB_INPUT_ID) else binInterior.LABEL_NONE),
+        'labelOn': _choice(inputs, BIN_LABEL_ON_ID, binInterior.ON_BOTH),
+        'wallOn': _choice(inputs, BIN_LABEL_WALL_ON_ID, binInterior.WALL_BOTH),
+        'stripWidth': float(_value(inputs, BIN_LABEL_STRIP_WIDTH_ID, 0.8)),
+        'labelDepth': float(_value(inputs, BIN_LABEL_DEPTH_ID, 0.02)),
+        'dividerDrop': float(_value(inputs, BIN_DIVIDER_DROP_ID, const.BIN_TAB_TOP_CLEARANCE)),
+        'frontHeight': float(_value(inputs, BIN_LABEL_FRONT_HEIGHT_ID, binInterior.TAPE_HEIGHT)),
+        'labelLength': float(_value(inputs, BIN_LABEL_LENGTH_ID, 0.0)),
+    }
+
+
+def _value(inputs, inputId, default):
+    item = inputs.itemById(inputId)
+    return default if item is None else item.value
+
+
+def _angle(inputs, inputId, default):
+    item = inputs.itemById(inputId)
+    if item is None:
+        return default
+    value = item.value
+    if isinstance(value, str):                     # stored expression ('30 deg')
+        try:
+            return app.activeProduct.unitsManager.evaluateExpression(value, 'deg')
+        except Exception:
+            return math.radians(float(''.join(c for c in value if c in '0123456789.-') or 30))
+    return value
+
+
+def _choice(inputs, inputId, default):
+    item = inputs.itemById(inputId)
+    return item.selectedItem.name if item is not None and item.selectedItem is not None else default
+
+
+# Solid outside of hollow bins (feet, walls, lip - no compartments), keyed by
+# the outside configuration: compartment / tab / scoop changes then cost no
+# parametric build at all.
+_solidCache = {}
+
+
+def _solidKey(inputs, ovh) -> str:
+    ids = (BIN_BASE_WIDTH_UNIT_INPUT_ID, BIN_BASE_LENGTH_UNIT_INPUT_ID, BIN_HEIGHT_UNIT_INPUT_ID,
+           BIN_XY_CLEARANCE_INPUT_ID, BIN_WIDTH_INPUT_ID, BIN_LENGTH_INPUT_ID, BIN_HEIGHT_INPUT_ID,
+           BIN_WALL_THICKNESS_INPUT_ID, BIN_SCREW_HOLES_INPUT_ID, BIN_GENERATE_BASE_INPUT_ID,
+           BIN_GENERATE_BODY_INPUT_ID, BIN_MAGNET_CUTOUTS_INPUT_ID, BIN_SCREW_DIAMETER_INPUT,
+           BIN_MAGNET_CUTOUTS_TABS_INPUT_ID, BIN_MAGNET_DIAMETER_INPUT, BIN_MAGNET_HEIGHT_INPUT,
+           BIN_WITH_LIP_INPUT_ID, BIN_WITH_LIP_NOTCHES_INPUT_ID, BIN_HAS_SCOOP_INPUT_ID)
+    vals = [inputs.itemById(i).value for i in ids]
+    return json.dumps(['solid', vals, ovh], sort_keys=True, default=str)
+
+
+def _withInterior(solid, inputs, ovh):
+    body = adsk.fusion.TemporaryBRepManager.get().copy(solid)
+    with gplog.timed('bin interior (in memory)'):
+        binInterior.applyInterior(body, interiorSpec(inputs, ovh))
+    return body
+
+
 def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, cacheKey: str, ovh=None):
     """Build the FULL bin (all upstream features) into an isolated scratch
     component, return an independent temp BRep of the result. Cached by the
@@ -1546,6 +1735,17 @@ def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, ca
     isHollow = binTypeDropdownInput.selectedItem.name == BIN_TYPE_HOLLOW
     isSolid = binTypeDropdownInput.selectedItem.name == BIN_TYPE_SOLID
     isShelled = binTypeDropdownInput.selectedItem.name == BIN_TYPE_SHELLED
+    # Hollow bins: the parametric generator builds only the solid outside
+    # (cached); compartments, scoop and tabs are cut in memory (binInterior).
+    interiorInMemory = isHollow and bin_generate_body.value
+    if ovh is None:
+        ovh = _overhangAmounts(inputs)
+    solidKey = _solidKey(inputs, ovh) if interiorInMemory else None
+    if solidKey is not None and solidKey in _solidCache:
+        gplog.log('_getBinTempBody: solid cache HIT')
+        tempBody = _withInterior(_solidCache[solidKey], inputs, ovh)
+        binFeature.setCachedBody(cacheKey, tempBody)
+        return tempBody
 
     root = adsk.fusion.Component.cast(des.rootComponent)
     xyClearance = xy_clearance.value
@@ -1624,7 +1824,7 @@ def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, ca
         binBodyInput.heightUnit = height_unit.value
         binBodyInput.xyClearance = xyClearance
         binBodyInput.binCornerFilletRadius = const.BIN_CORNER_FILLET_RADIUS - xyClearance
-        binBodyInput.isSolid = isSolid or isShelled
+        binBodyInput.isSolid = isSolid or isShelled or interiorInMemory
         binBodyInput.wallThickness = bin_wall_thickness.value
         binBodyInput.hasScoop = has_scoop.value and isHollow
         binBodyInput.scoopMaxRadius = binScoopMaxRadius.value
@@ -1784,6 +1984,11 @@ def _getBinTempBody(des: adsk.fusion.Design, inputs: adsk.core.CommandInputs, ca
 
     if tempBody is None or tempBody.faces.count == 0:
         raise RuntimeError('Generated bin body is empty')
+    if solidKey is not None:
+        if len(_solidCache) > 8:
+            _solidCache.clear()
+        _solidCache[solidKey] = tempBody
+        tempBody = _withInterior(tempBody, inputs, ovh)
     binFeature.setCachedBody(cacheKey, tempBody)
     gplog.log(f'_getBinTempBody: built, faces={tempBody.faces.count}, cached')
     return tempBody

@@ -146,6 +146,8 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
         p = L.withDefaults(dict(stored, **(_pasteSeed or {})), L.CABINET_DEFAULTS)
         if 'topMount' not in stored and 'topMount' not in (_pasteSeed or {}):
             p['topMount'] = L.TOP_MOUNT_FIXED      # made before the slide-in plate
+        if 'topLock' not in stored and 'topLock' not in (_pasteSeed or {}):
+            p['topLock'] = L.TOP_LOCK_INSIDE       # made before the outside lock
         _pasteSeed = None
     else:
         _editedFeature = None
@@ -217,15 +219,16 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
               'Optional, e.g. "1,1,2": three rows, the top one twice as high. Empty = equal rows.')
     form.choice(g, 'guide', 'Guides', p, L.GUIDE_TYPES,
                 'Ledges: inserts rest on shelf strips (simple, strong).\n'
-                'Grooves: V-grooves in the walls, inserts carry runners; with many rows an insert can span several.')
+                'Grooves: V-grooves in the walls, inserts carry runners; with many rows an insert can span several.\n'
+                'Hooked grooves: the runners hook behind a lip in the walls, so the inserts hold the walls '
+                'together (stops keep working when the walls would bend). Print the cabinet on its back.')
     form.length(g, 'ledgeDepth', 'Ledge depth', p, units, minimum=0.15, maximum=1.0)
     form.length(g, 'ledgeThickness', 'Ledge thickness', p, units, minimum=0.08, maximum=0.5)
     form.length(g, 'grooveDepth', 'Groove depth', p, units, minimum=0.1, maximum=0.5)
     form.boolean(g, 'detent', 'Click detent', p,
                  'Small bump near the front: inserts click shut, with a stop they cannot fall out')
-    form.boolean(g, 'snapCatch', 'Snap catches (experimental)', p,
-                 'Experimental: catches in the walls for the inserts\' snap tongues (they click in when '
-                 'closed). Not print-tested; the tongue leaves slots in the insert\'s side walls.')
+    form.boolean(g, 'stopParts', 'Stop bumps', p,
+                 'Bumps / teeth just behind the front for the inserts\' pull-out stops (side bump, top catch)')
     form.length(g, 'detentHeight', 'Detent height', p, units, minimum=0.02, maximum=0.15,
                 tooltip='How far the bump sticks up (default 0.6 mm). Higher = firmer click. '
                         'The insert height clearance grows with it.')
@@ -245,11 +248,30 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
     g = fitGroup.children
     form.length(g, 'fitLateral', 'Side clearance', p, units, minimum=0.0, maximum=0.3)
     form.length(g, 'fitVertical', 'Height clearance', p, units, minimum=0.0, maximum=0.5)
+    form.length(g, 'grooveFit', 'Groove clearance', p, units, minimum=0.0, maximum=0.1,
+                tooltip='Play of the runner of an insert in the V-groove, per flank (default 0.2 mm)')
     form.length(g, 'fitBack', 'Back clearance', p, units, minimum=0.0, maximum=1.0)
 
     # --- bottom / top
     g = inputs.addGroupCommandInput('bottomGroup', 'Bottom').children
     form.boolean(g, 'feet', 'Gridfinity feet', p, 'Off: flat bottom (same total height)')
+    form.choice(g, 'footMount', 'Feet', p, L.FOOT_MOUNTS,
+                'Built in: the cabinet prints standing, feet down.\n'
+                'Slide-on feet: one Gridfinity foot per cell as a part of its own (printed like a bin), the '
+                'cabinet gets a flat bottom with a dovetail head under each cell and prints on its back - use '
+                'the fixed top then (it prints as a wall, no bridges). Set a foot onto its head, push it the dovetail length '
+                'until it clicks at the stop. The direction alternates per column (held both ways in a '
+                'baseplate); the first column is pushed backwards - with a single column the cabinet only '
+                'comes off moved backwards, toward the wall. Mount each column from its far end. Partial '
+                'cells get no foot.')
+    form.length(g, 'footHeadLen', 'Foot dovetail length', p, units, minimum=0.6, maximum=3.4,
+                tooltip='Length of the dovetail under each cell (= how far the foot is pushed). '
+                        'With several rows at most about 17 mm (a foot is set on inside its own cell, '
+                        'else the next head is in the way); one row: up to about 33 mm, the foot '
+                        'slides on from beyond its end.')
+    form.length(g, 'footHeadWidth', 'Foot dovetail width', p, units, minimum=0.3, maximum=2.8,
+                tooltip='Width of the dovetail at the cabinet bottom; it widens by 2.5 mm each side '
+                        'below (45 deg).')
     form.boolean(g, 'magnets', 'Magnet holes', p)
     form.boolean(g, 'screws', 'Screw holes', p)
 
@@ -260,6 +282,19 @@ def _commandCreated(args: adsk.core.CommandCreatedEventArgs):
                 'Slide-in plate: the top is printed flat on its own and slides in from the front '
                 'on rails along the side walls; the cabinet then prints standing with nothing to bridge.\n'
                 'Fixed: one piece (print the cabinet on its back or with supports under the top).')
+    form.choice(g, 'topLock', 'Top plate lock', p, L.TOP_LOCKS,
+                'Held from outside: the rails lean inwards and the plate grips them from both sides - '
+                'under the inner side and over the outer side (flush with the outside), so the walls '
+                'cannot bend outwards (needs side walls of 1 mm or more).\n'
+                'Inside rails: rails flush with the outside, undercut inwards (older cabinets).')
+    form.length(g, 'railWidth', 'Top plate rail', p, units, minimum=0.0, maximum=0.2,
+                tooltip='Thickness of the leaning rail at its foot (held from outside); the plate edge beside '
+                        'it then stays 0.4 mm. 0 = automatic (rail and plate edge equal). The plate itself '
+                        'never changes, so the rail is limited by the side wall and the grid pockets: about '
+                        '0.6 mm with 1.2 mm walls, 1.2 mm in grooved cabinets (2.6 mm with a flat top).')
+    form.length(g, 'topClick', 'Top plate click', p, units, minimum=0.0, maximum=0.06,
+                tooltip='How much the slide-in plate squeezes over the click bump at the end '
+                        '(default 0.2 mm, more = firmer click, 0 = no click)')
     form.choice(g, 'topEdge', 'Top over border', p, L.TOP_EDGE_TYPES,
                 'Where the cabinet fills to the plate edge: repeat a partial cell as a cut '
                 'pocket (like the baseplate), or keep it flat')
@@ -332,18 +367,27 @@ def _body(des, p):
 
 
 def _syncVisibility(inputs):
-    p = form.read(inputs, ('heightMode', 'guide', 'feet', 'rows', 'rowWeights', 'topType', 'detent',
+    p = form.read(inputs, ('heightMode', 'guide', 'feet', 'footMount', 'rows', 'rowWeights', 'topType', 'topMount', 'topLock', 'detent',
                            'wallMount', 'mountRows', 'mountPerRow'))
     byUnits = p['heightMode'] == HEIGHT_MODES[0]
     form.setVisible(inputs, 'heightUnits', byUnits)
     form.setVisible(inputs, 'heightMm', not byUnits)
-    grooved = p['guide'] == L.GUIDE_GROOVE
+    grooved = p['guide'] in (L.GUIDE_GROOVE, L.GUIDE_HOOK)
     form.setVisible(inputs, 'ledgeDepth', not grooved)
     form.setVisible(inputs, 'ledgeThickness', not grooved)
     form.setVisible(inputs, 'grooveDepth', grooved)
+    form.setVisible(inputs, 'grooveFit', grooved)
     form.setVisible(inputs, 'magnets', bool(p['feet']))
     form.setVisible(inputs, 'screws', bool(p['feet']))
+    form.setVisible(inputs, 'footMount', bool(p['feet']))
+    slideFeet = bool(p['feet']) and p.get('footMount') == L.FOOT_SLIDE
+    form.setVisible(inputs, 'footHeadLen', slideFeet)
+    form.setVisible(inputs, 'footHeadWidth', slideFeet)
     form.setVisible(inputs, 'topEdge', p['topType'] == L.TOP_GRID)
+    form.setVisible(inputs, 'topClick', p.get('topMount') == L.TOP_MOUNT_SLIDE)
+    form.setVisible(inputs, 'topLock', p.get('topMount') == L.TOP_MOUNT_SLIDE)
+    form.setVisible(inputs, 'railWidth', p.get('topMount') == L.TOP_MOUNT_SLIDE
+                    and p.get('topLock') == L.TOP_LOCK_OUTSIDE)
     form.setVisible(inputs, 'detentHeight', bool(p['detent']))
     mount = bool(p['wallMount'])
     for inputId in ('mountScrew', 'mountHead', 'mountRows', 'mountPerRow', 'mountEdge', 'mountTop'):
@@ -385,7 +429,7 @@ def command_input_changed(args: adsk.core.InputChangedEventArgs):
     if changed.id == IN_ROTATE:
         _cycleRotation(inputs)
         return
-    if changed.id in ('heightMode', 'guide', 'feet', 'rowWeights', 'topType', 'detent', 'wallMount', 'mountRows', 'mountPerRow'):
+    if changed.id in ('heightMode', 'guide', 'feet', 'footMount', 'rowWeights', 'topType', 'topMount', 'topLock', 'detent', 'wallMount', 'mountRows', 'mountPerRow'):
         _syncVisibility(inputs)
     if changed.id == 'heightMode':
         # Carry the height across modes.
